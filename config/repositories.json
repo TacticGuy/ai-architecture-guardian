@@ -1,0 +1,23 @@
+[
+  {"owner": "django", "name": "django", "enabled": true},
+  {"owner": "fastapi", "name": "fastapi", "enabled": true},
+  {"owner": "pallets", "name": "flask", "enabled": true},
+  {"owner": "celery", "name": "celery", "enabled": true},
+  {"owner": "apache", "name": "airflow", "enabled": true},
+  {"owner": "psf", "name": "requests", "enabled": true},
+  {"owner": "scikit-learn", "name": "scikit-learn", "enabled": true},
+  {"owner": "pandas-dev", "name": "pandas", "enabled": true},
+  {"owner": "numpy", "name": "numpy", "enabled": true},
+  {"owner": "pytest-dev", "name": "pytest", "enabled": true},
+  {"owner": "psf", "name": "black", "enabled": true},
+  {"owner": "astral-sh", "name": "ruff", "enabled": true},
+  {"owner": "python", "name": "mypy", "enabled": true},
+  {"owner": "sqlalchemy", "name": "sqlalchemy", "enabled": true},
+  {"owner": "pydantic", "name": "pydantic", "enabled": true},
+  {"owner": "tornadoweb", "name": "tornado", "enabled": true},
+  {"owner": "jupyter", "name": "notebook", "enabled": true},
+  {"owner": "matplotlib", "name": "matplotlib", "enabled": true},
+  {"owner": "huggingface", "name": "transformers", "enabled": true},
+  {"owner": "sphinx-doc", "name": "sphinx", "enabled": true}
+]
+

@@ -1,0 +1,19 @@
+{
+  "scraper_version": "1.0.0",
+  "graphql_endpoint": "https://api.github.com/graphql",
+  "request_timeout_seconds": 30,
+  "max_retries": 4,
+  "retry_base_delay_seconds": 1.0,
+  "rate_limit_warning_threshold": 500,
+  "rate_limit_wait_enabled": true,
+  "rate_limit_max_wait_seconds": 3600,
+  "pr_page_size": 100,
+  "commit_page_size": 100,
+  "max_commits_per_pr": 100,
+  "impact_min_changed_files": 3,
+  "semantic_keywords": [
+    "refactor", "refactoring", "architecture", "architectural",
+    "circular import", "circular dependency", "decouple", "decoupling"
+  ]
+}
+
