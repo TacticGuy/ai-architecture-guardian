@@ -9,7 +9,13 @@ def build_dependency_graph(ast_data: dict[str, Any]) -> dict[str, Any]:
     """Create symbol/import/call graph nodes and typed edges without executing source code."""
     symbols = [dict(symbol) for symbol in ast_data["symbols"]]
     node_by_id = {node["id"]: node for node in symbols}
-    modules = {node["qualified_name"]: node["id"] for node in symbols if node["type"] == "module"}
+    module_ids: dict[str, list[str]] = defaultdict(list)
+    for node in symbols:
+        if node["type"] == "module":
+            module_ids[node["qualified_name"]].append(node["id"])
+    # Two files can share a dotted name (e.g. scripts/run.py and tools/run.py are
+    # both "run"); such names are ambiguous and must not be resolved by guessing.
+    modules = {name: ids[0] for name, ids in module_ids.items() if len(ids) == 1}
     names: dict[str, list[str]] = defaultdict(list)
     for node in symbols:
         names[node["name"]].append(node["id"])

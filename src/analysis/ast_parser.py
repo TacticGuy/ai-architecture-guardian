@@ -4,7 +4,7 @@ from __future__ import annotations
 import ast
 import tokenize
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 
@@ -20,6 +20,7 @@ def extract_repository_ast(repository_path: str | Path, analysis_settings: dict[
     files.sort(key=lambda path: path.relative_to(root).as_posix())
     if len(files) > max_files:
         raise ValueError(f"Repository has {len(files)} eligible Python files; configured maximum is {max_files}")
+    package_dirs = find_package_directories(root, excluded)
     symbols: list[dict[str, Any]] = []
     imports: list[dict[str, str]] = []
     calls: list[dict[str, str]] = []
@@ -35,7 +36,7 @@ def extract_repository_ast(repository_path: str | Path, analysis_settings: dict[
             errors.append({"path": relative, "error": f"{type(exc).__name__}: {exc}"})
             continue
         parsed_files.append(relative)
-        visitor = _SymbolVisitor(relative, source)
+        visitor = _SymbolVisitor(relative, source, module_name_for(relative, package_dirs))
         visitor.visit(tree)
         symbols.extend(visitor.symbols)
         imports.extend(visitor.imports)
@@ -59,15 +60,50 @@ def _include_file(path: Path, root: Path, excluded: set[str], include_tests: boo
     return include_tests or not any(part in {"tests", "test"} or part.startswith("test_") for part in parts)
 
 
+def find_package_directories(root: Path, excluded: set[str]) -> set[str]:
+    """Return repository-relative POSIX paths of directories that contain an ``__init__.py``.
+
+    The repository root itself is never treated as a package.
+    """
+    packages: set[str] = set()
+    for marker in root.rglob("__init__.py"):
+        parts = marker.relative_to(root).parts[:-1]
+        if parts and not any(part in excluded for part in parts):
+            packages.add("/".join(parts))
+    return packages
+
+
+def module_name_for(relative_path: str, package_dirs: set[str]) -> str:
+    """Return the dotted name Python would use to import a file.
+
+    The name starts at the highest ancestor directory that is a package (has an
+    ``__init__.py``), so ``src/pkg/core.py`` becomes ``pkg.core`` and
+    ``src/pkg/__init__.py`` becomes ``pkg``. Directories without ``__init__.py``
+    below that package are kept, matching Python's namespace-package rules. A file
+    with no package ancestor is a top-level module named after the file.
+    """
+    parts = PurePosixPath(relative_path).parts
+    directories, stem = parts[:-1], PurePosixPath(parts[-1]).stem
+    start = len(directories)
+    for depth in range(1, len(directories) + 1):
+        if "/".join(directories[:depth]) in package_dirs:
+            start = depth - 1
+            break
+    names = list(directories[start:])
+    if stem != "__init__":
+        names.append(stem)
+    return ".".join(names) or stem
+
+
 class _SymbolVisitor(ast.NodeVisitor):
-    def __init__(self, relative_path: str, source: str) -> None:
+    def __init__(self, relative_path: str, source: str, module_name: str) -> None:
         self.relative_path = relative_path
         self.source_lines = source.splitlines()
         self.symbols: list[dict[str, Any]] = []
         self.imports: list[dict[str, str]] = []
         self.calls: list[dict[str, str]] = []
         self.scope: list[dict[str, str]] = []
-        self._push_symbol("module", Path(relative_path).with_suffix("").as_posix().replace("/", "."), 1, len(self.source_lines))
+        self._push_symbol("module", module_name, 1, len(self.source_lines))
 
     @property
     def current(self) -> dict[str, str]:
