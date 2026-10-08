@@ -141,6 +141,9 @@ class _SymbolVisitor(ast.NodeVisitor):
         self.local_names: set[str] = set()
         self.scope: list[dict[str, str]] = []
         self.module_symbol = self._push_symbol("module", module_name, 1, len(self.source_lines))
+        # A module's size is the number of lines in its file (an empty file is 0), counted
+        # the same way as classes and functions: every line, including blanks and comments.
+        self.module_symbol["loc"] = len(self.source_lines)
 
     @property
     def current(self) -> dict[str, str]:
