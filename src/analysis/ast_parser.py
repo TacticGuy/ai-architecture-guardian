@@ -95,9 +95,28 @@ def module_name_for(relative_path: str, package_dirs: set[str]) -> str:
     return ".".join(names) or stem
 
 
+def resolve_relative_module(module_name: str, is_package: bool, level: int, module: str | None) -> str | None:
+    """Turn a relative import into an absolute module name, or ``None`` if impossible.
+
+    One dot means the package containing the current file. For an ``__init__.py`` that
+    package is the module itself. Each extra dot goes one package higher.
+    Example: in ``pkg.sub.mod``, ``from ..utils import x`` refers to ``pkg.utils``.
+    """
+    parts = module_name.split(".") if module_name else []
+    package = parts if is_package else parts[:-1]
+    if level - 1 >= len(package):
+        return None
+    base = package[:len(package) - (level - 1)]
+    if module:
+        base = base + module.split(".")
+    return ".".join(base)
+
+
 class _SymbolVisitor(ast.NodeVisitor):
     def __init__(self, relative_path: str, source: str, module_name: str) -> None:
         self.relative_path = relative_path
+        self.module_name = module_name
+        self.is_package = PurePosixPath(relative_path).name == "__init__.py"
         self.source_lines = source.splitlines()
         self.symbols: list[dict[str, Any]] = []
         self.imports: list[dict[str, str]] = []
@@ -147,13 +166,25 @@ class _SymbolVisitor(ast.NodeVisitor):
 
     def visit_Import(self, node: ast.Import) -> None:
         for alias in node.names:
-            self.imports.append({"source_id": self.current["id"], "target_module": alias.name})
+            self.imports.append({"source_id": self.current["id"], "target_module": alias.name, "from_module": None})
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
-        prefix = "." * node.level + (node.module or "")
+        # ``from_module`` is the absolute module named after ``from``; ``target_module``
+        # adds the imported name, which may itself be a submodule (``from pkg import utils``).
+        if node.level:
+            base = resolve_relative_module(self.module_name, self.is_package, node.level, node.module)
+        else:
+            base = node.module
+        if base is None:
+            # Relative import that climbs above the top-level package: keep the
+            # original dotted text so it is visibly unresolved and never linked.
+            base = "." * node.level + (node.module or "")
+            join = "" if base.endswith(".") else "."
+        else:
+            join = "."
         for alias in node.names:
-            target = prefix if alias.name == "*" else f"{prefix}.{alias.name}".strip(".")
-            self.imports.append({"source_id": self.current["id"], "target_module": target or "."})
+            target = base if alias.name == "*" else f"{base}{join}{alias.name}" if base else alias.name
+            self.imports.append({"source_id": self.current["id"], "target_module": target, "from_module": base or None})
 
     def visit_Call(self, node: ast.Call) -> None:
         self.calls.append({"source_id": self.current["id"], "target_name": _expression_name(node.func)})
