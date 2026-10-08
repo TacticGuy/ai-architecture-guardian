@@ -1,0 +1,55 @@
+"""Build a deterministic directed dependency graph from extracted AST facts."""
+from __future__ import annotations
+
+from collections import defaultdict
+from typing import Any
+
+
+def build_dependency_graph(ast_data: dict[str, Any]) -> dict[str, Any]:
+    """Create symbol/import/call graph nodes and typed edges without executing source code."""
+    symbols = [dict(symbol) for symbol in ast_data["symbols"]]
+    node_by_id = {node["id"]: node for node in symbols}
+    modules = {node["qualified_name"]: node["id"] for node in symbols if node["type"] == "module"}
+    names: dict[str, list[str]] = defaultdict(list)
+    for node in symbols:
+        names[node["name"]].append(node["id"])
+        names[node["qualified_name"]].append(node["id"])
+    edges: set[tuple[str, str, str]] = set()
+    for node in symbols:
+        parent = node.get("parent_id")
+        if parent:
+            edges.add((parent, node["id"], "CONTAINS"))
+    for relation in ast_data["imports"]:
+        target_id = _resolve_module(relation["target_module"], modules)
+        if target_id is None:
+            target_id = f"external_module:{relation['target_module']}"
+            node_by_id.setdefault(target_id, {"id": target_id, "type": "external_module", "name": relation["target_module"],
+                                               "qualified_name": relation["target_module"], "parent_id": None})
+        edges.add((relation["source_id"], target_id, "IMPORTS"))
+    for relation in ast_data["calls"]:
+        target_id = _resolve_call(relation["target_name"], names)
+        if target_id is None:
+            target_id = f"external_callable:{relation['target_name']}"
+            node_by_id.setdefault(target_id, {"id": target_id, "type": "external_callable", "name": relation["target_name"],
+                                               "qualified_name": relation["target_name"], "parent_id": None})
+        edges.add((relation["source_id"], target_id, "CALLS"))
+    graph_edges = [{"source": source, "target": target, "type": edge_type}
+                   for source, target, edge_type in sorted(edges)]
+    nodes = [node_by_id[node_id] for node_id in sorted(node_by_id)]
+    return {"schema_version": 1, "repository_path": ast_data["repository_path"],
+            "ast_extracted_at": ast_data["extracted_at"], "nodes": nodes, "edges": graph_edges,
+            "summary": {"node_count": len(nodes), "edge_count": len(graph_edges),
+                        "parsed_file_count": len(ast_data["files"]), "parse_error_count": len(ast_data["parse_errors"])}}
+
+
+def _resolve_module(target: str, modules: dict[str, str]) -> str | None:
+    if target in modules:
+        return modules[target]
+    candidates = [node_id for module, node_id in modules.items() if module.endswith("." + target)]
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def _resolve_call(target: str, names: dict[str, list[str]]) -> str | None:
+    short_name = target.rsplit(".", 1)[-1]
+    candidates = names.get(target, []) or names.get(short_name, [])
+    return candidates[0] if len(candidates) == 1 else None
