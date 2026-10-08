@@ -2,10 +2,16 @@
 from __future__ import annotations
 
 import ast
+import builtins
 import tokenize
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any
+
+# Public names of Python's built-in functions, types and exceptions (len, print, dict,
+# ValueError, ...). A file that imports or defines its own version of one of these
+# names shadows the built-in, and such calls are still recorded.
+BUILTIN_NAMES = frozenset(name for name in dir(builtins) if not name.startswith("_"))
 
 
 def extract_repository_ast(repository_path: str | Path, analysis_settings: dict[str, Any]) -> dict[str, Any]:
@@ -245,6 +251,12 @@ class _SymbolVisitor(ast.NodeVisitor):
             via_import = True
         elif first in self.local_names:
             qualified = f"{self.module_name}.{raw}"
+        elif not rest and first in BUILTIN_NAMES:
+            # len(), print(), isinstance(), ValueError(), ... say nothing about how the
+            # project's own parts depend on each other, so they are not recorded. Calls
+            # inside the brackets (len(helper())) are still visited below.
+            self.generic_visit(node)
+            return
         self.calls.append({"source_id": self.current["id"], "target_name": raw,
                            "qualified_target": qualified, "via_import": via_import})
         self.generic_visit(node)
