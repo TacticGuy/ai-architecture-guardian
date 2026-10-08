@@ -23,7 +23,8 @@ def extract_repository_ast(repository_path: str | Path, analysis_settings: dict[
     package_dirs = find_package_directories(root, excluded)
     symbols: list[dict[str, Any]] = []
     imports: list[dict[str, str]] = []
-    calls: list[dict[str, str]] = []
+    calls: list[dict[str, Any]] = []
+    module_aliases: dict[str, dict[str, str]] = {}
     errors: list[dict[str, str]] = []
     parsed_files: list[str] = []
     for source_path in files:
@@ -41,6 +42,8 @@ def extract_repository_ast(repository_path: str | Path, analysis_settings: dict[
         symbols.extend(visitor.symbols)
         imports.extend(visitor.imports)
         calls.extend(visitor.calls)
+        if visitor.aliases:
+            module_aliases[visitor.module_symbol["id"]] = dict(sorted(visitor.aliases.items()))
     return {
         "schema_version": 1,
         "repository_path": str(root),
@@ -49,6 +52,9 @@ def extract_repository_ast(repository_path: str | Path, analysis_settings: dict[
         "symbols": sorted(symbols, key=lambda symbol: symbol["id"]),
         "imports": sorted(imports, key=lambda edge: (edge["source_id"], edge["target_module"])),
         "calls": sorted(calls, key=lambda edge: (edge["source_id"], edge["target_name"])),
+        # For each module ID: which local names were imported, and from where.
+        # Used to follow re-exports such as ``from .models import Response`` in __init__.py.
+        "module_aliases": module_aliases,
         "parse_errors": errors,
     }
 
@@ -120,9 +126,11 @@ class _SymbolVisitor(ast.NodeVisitor):
         self.source_lines = source.splitlines()
         self.symbols: list[dict[str, Any]] = []
         self.imports: list[dict[str, str]] = []
-        self.calls: list[dict[str, str]] = []
+        self.calls: list[dict[str, Any]] = []
+        self.aliases: dict[str, str] = {}
+        self.local_names: set[str] = set()
         self.scope: list[dict[str, str]] = []
-        self._push_symbol("module", module_name, 1, len(self.source_lines))
+        self.module_symbol = self._push_symbol("module", module_name, 1, len(self.source_lines))
 
     @property
     def current(self) -> dict[str, str]:
@@ -168,9 +176,8 @@ class _SymbolVisitor(ast.NodeVisitor):
         for alias in node.names:
             self.imports.append({"source_id": self.current["id"], "target_module": alias.name, "from_module": None})
 
-    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
-        # ``from_module`` is the absolute module named after ``from``; ``target_module``
-        # adds the imported name, which may itself be a submodule (``from pkg import utils``).
+    def _from_base(self, node: ast.ImportFrom) -> tuple[str, str]:
+        """Return the absolute module after ``from`` and the separator used to append names."""
         if node.level:
             base = resolve_relative_module(self.module_name, self.is_package, node.level, node.module)
         else:
@@ -179,15 +186,67 @@ class _SymbolVisitor(ast.NodeVisitor):
             # Relative import that climbs above the top-level package: keep the
             # original dotted text so it is visibly unresolved and never linked.
             base = "." * node.level + (node.module or "")
-            join = "" if base.endswith(".") else "."
-        else:
-            join = "."
+            return base, "" if base.endswith(".") else "."
+        return base, "."
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        # ``from_module`` is the absolute module named after ``from``; ``target_module``
+        # adds the imported name, which may itself be a submodule (``from pkg import utils``).
+        base, join = self._from_base(node)
         for alias in node.names:
             target = base if alias.name == "*" else f"{base}{join}{alias.name}" if base else alias.name
             self.imports.append({"source_id": self.current["id"], "target_module": target, "from_module": base or None})
 
+    def visit_Module(self, node: ast.Module) -> None:
+        self._collect_bindings(node)
+        self.generic_visit(node)
+
+    def _collect_bindings(self, tree: ast.Module) -> None:
+        """Record which local names refer to imported things and to this module's own definitions.
+
+        ``import a.b`` binds ``a``; ``import a.b as c`` binds ``c`` to ``a.b``;
+        ``from x import y as z`` binds ``z`` to ``x.y``. Imports anywhere in the file count,
+        which is a deliberate simplification of Python's scoping rules.
+        """
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.asname:
+                        self.aliases[alias.asname] = alias.name
+                    else:
+                        top = alias.name.split(".", 1)[0]
+                        self.aliases[top] = top
+            elif isinstance(node, ast.ImportFrom):
+                base, join = self._from_base(node)
+                for alias in node.names:
+                    if alias.name != "*":
+                        self.aliases[alias.asname or alias.name] = f"{base}{join}{alias.name}" if base else alias.name
+        self.local_names = {statement.name for statement in tree.body
+                            if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))}
+
+    def _enclosing_class(self) -> str | None:
+        for symbol in reversed(self.scope):
+            if symbol["type"] == "class":
+                return symbol["qualified_name"]
+        return None
+
     def visit_Call(self, node: ast.Call) -> None:
-        self.calls.append({"source_id": self.current["id"], "target_name": _expression_name(node.func)})
+        raw = _expression_name(node.func)
+        first, _, rest = raw.partition(".")
+        qualified: str | None = None
+        via_import = False
+        if first in {"self", "cls"}:
+            owner = self._enclosing_class()
+            # Only direct attribute calls (self.method()); self.x.y() depends on runtime types.
+            if owner and rest and "." not in rest:
+                qualified = f"{owner}.{rest}"
+        elif first in self.aliases:
+            qualified = self.aliases[first] + (f".{rest}" if rest else "")
+            via_import = True
+        elif first in self.local_names:
+            qualified = f"{self.module_name}.{raw}"
+        self.calls.append({"source_id": self.current["id"], "target_name": raw,
+                           "qualified_target": qualified, "via_import": via_import})
         self.generic_visit(node)
 
 
