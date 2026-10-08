@@ -51,7 +51,7 @@ The parser recursively finds eligible `.py` files and never executes repository 
 - docstring and async flags;
 - parse errors without failing the entire repository.
 
-By default it skips test directories and common virtual environment/build/cache directories. This is configurable under `static_analysis` in [config/settings.json](config/settings.json).
+By default it skips test directories, common virtual environment/build/cache directories, `docs/`, `doc/`, `examples/` and `benchmarks/` folders, and `setup.py`/`conftest.py` files, so the graph describes the library itself. This is configurable under `static_analysis` in [config/settings.json](config/settings.json) (`excluded_directory_names`, `excluded_file_names`).
 
 ### Dependency graph (point 3)
 

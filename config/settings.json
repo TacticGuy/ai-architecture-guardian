@@ -19,8 +19,10 @@
     "max_python_files_per_repository": 10000,
     "excluded_directory_names": [
       ".git", ".venv", "venv", "env", "__pycache__", ".tox", ".nox",
-      "build", "dist", "node_modules", ".mypy_cache", ".pytest_cache"
-    ]
+      "build", "dist", "node_modules", ".mypy_cache", ".pytest_cache",
+      "docs", "doc", "examples", "benchmarks"
+    ],
+    "excluded_file_names": ["setup.py", "conftest.py"]
   },
   "semantic_keywords": [
     "refactor", "refactoring", "architecture", "architectural",

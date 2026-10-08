@@ -20,9 +20,10 @@ def extract_repository_ast(repository_path: str | Path, analysis_settings: dict[
     if not root.is_dir():
         raise ValueError(f"Repository path is not a directory: {root}")
     excluded = set(analysis_settings["excluded_directory_names"])
+    excluded_files = set(analysis_settings.get("excluded_file_names", []))
     include_tests = bool(analysis_settings["include_tests"])
     max_files = int(analysis_settings["max_python_files_per_repository"])
-    files = [path for path in root.rglob("*.py") if _include_file(path, root, excluded, include_tests)]
+    files = [path for path in root.rglob("*.py") if _include_file(path, root, excluded, excluded_files, include_tests)]
     files.sort(key=lambda path: path.relative_to(root).as_posix())
     if len(files) > max_files:
         raise ValueError(f"Repository has {len(files)} eligible Python files; configured maximum is {max_files}")
@@ -65,9 +66,12 @@ def extract_repository_ast(repository_path: str | Path, analysis_settings: dict[
     }
 
 
-def _include_file(path: Path, root: Path, excluded: set[str], include_tests: bool) -> bool:
+def _include_file(path: Path, root: Path, excluded: set[str], excluded_files: set[str], include_tests: bool) -> bool:
     parts = path.relative_to(root).parts
     if any(part in excluded for part in parts[:-1]):
+        return False
+    # Exact file names only: "setup.py" is skipped, "setup_helpers.py" is not.
+    if parts[-1] in excluded_files:
         return False
     return include_tests or not any(part in {"tests", "test"} or part.startswith("test_") for part in parts)
 
