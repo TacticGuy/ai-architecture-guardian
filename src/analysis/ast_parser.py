@@ -1,0 +1,167 @@
+"""Extract syntax-level symbols, imports, calls, and static complexity from Python files."""
+from __future__ import annotations
+
+import ast
+import tokenize
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+
+def extract_repository_ast(repository_path: str | Path, analysis_settings: dict[str, Any]) -> dict[str, Any]:
+    """Parse Python sources without importing or executing any repository code."""
+    root = Path(repository_path).resolve()
+    if not root.is_dir():
+        raise ValueError(f"Repository path is not a directory: {root}")
+    excluded = set(analysis_settings["excluded_directory_names"])
+    include_tests = bool(analysis_settings["include_tests"])
+    max_files = int(analysis_settings["max_python_files_per_repository"])
+    files = [path for path in root.rglob("*.py") if _include_file(path, root, excluded, include_tests)]
+    files.sort(key=lambda path: path.relative_to(root).as_posix())
+    if len(files) > max_files:
+        raise ValueError(f"Repository has {len(files)} eligible Python files; configured maximum is {max_files}")
+    symbols: list[dict[str, Any]] = []
+    imports: list[dict[str, str]] = []
+    calls: list[dict[str, str]] = []
+    errors: list[dict[str, str]] = []
+    parsed_files: list[str] = []
+    for source_path in files:
+        relative = source_path.relative_to(root).as_posix()
+        try:
+            with tokenize.open(source_path) as handle:
+                source = handle.read()
+            tree = ast.parse(source, filename=relative, type_comments=True)
+        except (OSError, SyntaxError, UnicodeError) as exc:
+            errors.append({"path": relative, "error": f"{type(exc).__name__}: {exc}"})
+            continue
+        parsed_files.append(relative)
+        visitor = _SymbolVisitor(relative, source)
+        visitor.visit(tree)
+        symbols.extend(visitor.symbols)
+        imports.extend(visitor.imports)
+        calls.extend(visitor.calls)
+    return {
+        "schema_version": 1,
+        "repository_path": str(root),
+        "extracted_at": datetime.now(timezone.utc).isoformat(),
+        "files": parsed_files,
+        "symbols": sorted(symbols, key=lambda symbol: symbol["id"]),
+        "imports": sorted(imports, key=lambda edge: (edge["source_id"], edge["target_module"])),
+        "calls": sorted(calls, key=lambda edge: (edge["source_id"], edge["target_name"])),
+        "parse_errors": errors,
+    }
+
+
+def _include_file(path: Path, root: Path, excluded: set[str], include_tests: bool) -> bool:
+    parts = path.relative_to(root).parts
+    if any(part in excluded for part in parts[:-1]):
+        return False
+    return include_tests or not any(part in {"tests", "test"} or part.startswith("test_") for part in parts)
+
+
+class _SymbolVisitor(ast.NodeVisitor):
+    def __init__(self, relative_path: str, source: str) -> None:
+        self.relative_path = relative_path
+        self.source_lines = source.splitlines()
+        self.symbols: list[dict[str, Any]] = []
+        self.imports: list[dict[str, str]] = []
+        self.calls: list[dict[str, str]] = []
+        self.scope: list[dict[str, str]] = []
+        self._push_symbol("module", Path(relative_path).with_suffix("").as_posix().replace("/", "."), 1, len(self.source_lines))
+
+    @property
+    def current(self) -> dict[str, str]:
+        return self.scope[-1]
+
+    def _push_symbol(self, kind: str, name: str, line: int, end_line: int) -> dict[str, str]:
+        parent = self.scope[-1]["id"] if self.scope else None
+        qualified_name = name if not self.scope else f"{self.scope[-1]['qualified_name']}.{name}"
+        identifier = f"{self.relative_path}:{qualified_name}"
+        symbol = {"id": identifier, "type": kind, "name": name, "qualified_name": qualified_name,
+                  "parent_id": parent, "path": self.relative_path, "line": line, "end_line": end_line}
+        self.symbols.append(symbol)
+        self.scope.append(symbol)
+        return symbol
+
+    def _pop_symbol(self) -> None:
+        self.scope.pop()
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        symbol = self._push_symbol("class", node.name, node.lineno, getattr(node, "end_lineno", node.lineno))
+        symbol.update({"base_classes": [_expression_name(base) for base in node.bases],
+                       "loc": _loc(node), "docstring": bool(ast.get_docstring(node))})
+        self.generic_visit(node)
+        self._pop_symbol()
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self._visit_function(node)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        self._visit_function(node)
+
+    def _visit_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        kind = "method" if self.current["type"] == "class" else "function"
+        symbol = self._push_symbol(kind, node.name, node.lineno, getattr(node, "end_lineno", node.lineno))
+        symbol.update({"loc": _loc(node), "docstring": bool(ast.get_docstring(node)),
+                       "is_async": isinstance(node, ast.AsyncFunctionDef),
+                       "parameters": _parameter_features(node.args),
+                       "cyclomatic_complexity": calculate_cyclomatic_complexity(node)})
+        self.generic_visit(node)
+        self._pop_symbol()
+
+    def visit_Import(self, node: ast.Import) -> None:
+        for alias in node.names:
+            self.imports.append({"source_id": self.current["id"], "target_module": alias.name})
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        prefix = "." * node.level + (node.module or "")
+        for alias in node.names:
+            target = prefix if alias.name == "*" else f"{prefix}.{alias.name}".strip(".")
+            self.imports.append({"source_id": self.current["id"], "target_module": target or "."})
+
+    def visit_Call(self, node: ast.Call) -> None:
+        self.calls.append({"source_id": self.current["id"], "target_name": _expression_name(node.func)})
+        self.generic_visit(node)
+
+
+def _loc(node: ast.AST) -> int:
+    return max(1, getattr(node, "end_lineno", node.lineno) - node.lineno + 1)
+
+
+def _expression_name(node: ast.AST) -> str:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return f"{_expression_name(node.value)}.{node.attr}"
+    if isinstance(node, ast.Call):
+        return _expression_name(node.func)
+    return type(node).__name__
+
+
+def _parameter_features(arguments: ast.arguments) -> dict[str, int]:
+    positional = len(arguments.posonlyargs) + len(arguments.args)
+    return {"positional": positional, "keyword_only": len(arguments.kwonlyargs),
+            "vararg": int(arguments.vararg is not None), "kwarg": int(arguments.kwarg is not None),
+            "total": positional + len(arguments.kwonlyargs) + int(arguments.vararg is not None) + int(arguments.kwarg is not None)}
+
+
+def calculate_cyclomatic_complexity(function: ast.FunctionDef | ast.AsyncFunctionDef) -> int:
+    """Return a deterministic McCabe-style score: one plus branch decisions."""
+    score = 1
+    def visit(node: ast.AST) -> None:
+        nonlocal score
+        for child in ast.iter_child_nodes(node):
+            # Nested definitions have independent complexity and must not affect the parent.
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)):
+                continue
+            _count(child)
+            visit(child)
+
+    def _count(node: ast.AST) -> None:
+        nonlocal score
+        if isinstance(node, (ast.If, ast.For, ast.AsyncFor, ast.While, ast.ExceptHandler, ast.IfExp, ast.comprehension)):
+            score += 1
+        elif isinstance(node, ast.BoolOp):
+            score += max(0, len(node.values) - 1)
+    visit(function)
+    return score
