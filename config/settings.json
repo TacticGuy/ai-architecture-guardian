@@ -11,6 +11,17 @@
   "commit_page_size": 100,
   "max_commits_per_pr": 100,
   "impact_min_changed_files": 3,
+  "repository_storage_directory": "data/repositories",
+  "analysis_output_directory": "data/analysis",
+  "clone_timeout_seconds": 600,
+  "static_analysis": {
+    "include_tests": false,
+    "max_python_files_per_repository": 10000,
+    "excluded_directory_names": [
+      ".git", ".venv", "venv", "env", "__pycache__", ".tox", ".nox",
+      "build", "dist", "node_modules", ".mypy_cache", ".pytest_cache"
+    ]
+  },
   "semantic_keywords": [
     "refactor", "refactoring", "architecture", "architectural",
     "circular import", "circular dependency", "decouple", "decoupling"

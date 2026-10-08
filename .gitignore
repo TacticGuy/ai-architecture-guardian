@@ -9,3 +9,7 @@ data/raw/*.json
 data/filtered/*.jsonl
 data/statistics/*.json
 data/statistics/*.jsonl
+data/repositories/*
+!data/repositories/.gitkeep
+data/analysis/*
+!data/analysis/.gitkeep
