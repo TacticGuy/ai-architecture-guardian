@@ -26,11 +26,13 @@ def build_dependency_graph(ast_data: dict[str, Any]) -> dict[str, Any]:
         if parent:
             edges.add((parent, node["id"], "CONTAINS"))
     for relation in ast_data["imports"]:
-        target_id = _resolve_module(relation["target_module"], modules)
+        from_module = relation.get("from_module")
+        target_id = _resolve_module(relation["target_module"], from_module, modules)
         if target_id is None:
-            target_id = f"external_module:{relation['target_module']}"
-            node_by_id.setdefault(target_id, {"id": target_id, "type": "external_module", "name": relation["target_module"],
-                                               "qualified_name": relation["target_module"], "parent_id": None})
+            external = _external_module_name(relation["target_module"], from_module)
+            target_id = f"external_module:{external}"
+            node_by_id.setdefault(target_id, {"id": target_id, "type": "external_module", "name": external,
+                                               "qualified_name": external, "parent_id": None})
         edges.add((relation["source_id"], target_id, "IMPORTS"))
     for relation in ast_data["calls"]:
         target_id = _resolve_call(relation["target_name"], names)
@@ -48,11 +50,30 @@ def build_dependency_graph(ast_data: dict[str, Any]) -> dict[str, Any]:
                         "parsed_file_count": len(ast_data["files"]), "parse_error_count": len(ast_data["parse_errors"])}}
 
 
-def _resolve_module(target: str, modules: dict[str, str]) -> str | None:
+def _resolve_module(target: str, from_module: str | None, modules: dict[str, str]) -> str | None:
+    """Link an import to a project module using exact names only.
+
+    ``from X import Name`` is recorded as target ``X.Name`` with ``from_module`` ``X``.
+    ``X.Name`` wins when it is itself a module (``from pkg import utils``); otherwise
+    the import points at module ``X``. No suffix guessing: a third-party ``import utils``
+    must not be linked to a local ``pkg.utils``.
+    """
     if target in modules:
         return modules[target]
-    candidates = [node_id for module, node_id in modules.items() if module.endswith("." + target)]
-    return candidates[0] if len(candidates) == 1 else None
+    if from_module and from_module in modules:
+        return modules[from_module]
+    return None
+
+
+def _external_module_name(target: str, from_module: str | None) -> str:
+    """Name an unresolved import after the module it comes from (``os.path``, not ``os.path.join``).
+
+    Unresolvable relative imports (``from_module`` still starting with ``.``) keep their
+    full original text so they remain recognisable.
+    """
+    if from_module and not from_module.startswith("."):
+        return from_module
+    return target
 
 
 def _resolve_call(target: str, names: dict[str, list[str]]) -> str | None:
