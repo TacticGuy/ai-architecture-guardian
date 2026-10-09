@@ -13,3 +13,5 @@ data/repositories/*
 !data/repositories/.gitkeep
 data/analysis/*
 !data/analysis/.gitkeep
+data/pyg/*
+!data/pyg/.gitkeep

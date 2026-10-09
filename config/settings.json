@@ -13,6 +13,7 @@
   "impact_min_changed_files": 3,
   "repository_storage_directory": "data/repositories",
   "analysis_output_directory": "data/analysis",
+  "pyg_output_directory": "data/pyg",
   "clone_timeout_seconds": 600,
   "static_analysis": {
     "include_tests": false,

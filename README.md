@@ -1,22 +1,23 @@
 # Python PR Architecture Dataset Pipeline
 
-This project implements flow-graph points **1–4**:
+This project implements flow-graph points **1–5**:
 
 ```text
 1. Clone and store Python repositories
 2. Parse Python source with AST
 3. Build a static dependency graph
 4. Create explainable node features
+5. Convert each graph to PyTorch Geometric HeteroData
 ```
 
-It also retains the earlier repository selection, GitHub merged-PR metadata collection, and deterministic PR filtering workflow. It does **not** implement graph-to-PyTorch conversion, GNNs, CodeBERT, graph comparison, risk prediction, XAI, RAG, or LLM remediation.
+It also retains the earlier repository selection, GitHub merged-PR metadata collection, and deterministic PR filtering workflow. It does **not** implement GNNs, CodeBERT, graph comparison, risk prediction, XAI, RAG, or LLM remediation.
 
 ## Architecture
 
 ```text
 repositories.json → GitHub GraphQL → raw PR JSONL → filtering
                                                   ↓
-config/repositories.json → Git clone → AST facts → dependency graph → node features
+config/repositories.json → Git clone → AST facts → dependency graph → node features → PyG HeteroData
 ```
 
 - The GitHub path stores merged PR metadata and applies the configured impact/keyword filters.
@@ -33,6 +34,7 @@ data/repositories/clone_manifest.json          clone URL, HEAD commit, branch, t
 data/analysis/django__django/ast.json          AST symbols, imports, calls, parse errors
 data/analysis/django__django/dependency_graph.json
 data/analysis/django__django/node_features.json
+data/pyg/django__django/graph.pt               PyTorch Geometric HeteroData (point 5)
 ```
 
 These runtime files are deliberately Git-ignored: clones can be large and analysis output is reproducible.
@@ -79,6 +81,17 @@ Each graph node has named, ordered feature values in `node_features.json`:
 
 The artifact includes both `feature_names` and a `features` mapping, so features are inspectable before any later ML conversion.
 
+### PyTorch Geometric graphs (point 5)
+
+`src/ml/hetero_data.py` converts `dependency_graph.json` + `node_features.json` into a PyTorch Geometric `HeteroData` object, saved as `data/pyg/<owner>__<name>/graph.pt`. The schema is fixed, so graphs from different repositories or commits can be batched together:
+
+- **6 node types**, always present (possibly empty): `module`, `class`, `function`, `method`, `external_module`, `external_callable`.
+- Each node type has `x`, a float32 tensor `[num_nodes, 15]` (columns listed in `data.feature_names`; the `node_type` column is dropped because the store already gives the type), and `node_ids`, the original node IDs in row order for mapping results back to code.
+- **41 edge types**, always present (possibly empty), named `(source type, relation, target type)` such as `("module", "IMPORTS", "module")`, `("method", "CALLS", "function")` and `("class", "INHERITS", "class")`. Each has `edge_index`, an int64 tensor `[2, num_edges]`.
+- Values are raw (not scaled) and no reverse edges are added: both are training choices for the GNN step.
+
+Load a saved graph with `src.ml.hetero_data.load_hetero_data(path)`. PyTorch 2.6+ needs `weights_only=False` for `HeteroData`, which this helper sets, so only load `.pt` files this project created.
+
 ## Requirements and setup
 
 Use Python 3.10+ (Python 3.11 is preferred), Git on your `PATH`, and a GitHub Personal Access Token only if you will use the GraphQL scraper.
@@ -94,7 +107,7 @@ Copy-Item .env.example .env
 
 Set `GITHUB_TOKEN=` in `.env` only for GitHub metadata scraping. Repository cloning uses public `https://github.com/owner/name.git` URLs and does not read the token.
 
-## Run and test points 1–4
+## Run and test points 1–5
 
 First run the offline test suite:
 
@@ -114,6 +127,12 @@ Analyse that clone through points 2–4:
 python scripts/analyse_repositories.py --repo django/django
 ```
 
+Convert the analysis to a PyTorch Geometric graph (point 5):
+
+```powershell
+python scripts/build_pyg_graphs.py --repo django/django
+```
+
 Inspect the outputs:
 
 ```powershell
@@ -128,6 +147,7 @@ To process every enabled repository:
 ```powershell
 python scripts/clone_repositories.py --all
 python scripts/analyse_repositories.py --all
+python scripts/build_pyg_graphs.py --all
 ```
 
 Existing clones are left unchanged by default. Update them only explicitly:
@@ -160,4 +180,4 @@ Use `--resume` to continue a metadata scrape from its saved cursor. See `--help`
 
 ## Limits
 
-Static analysis is syntactic and static: it cannot fully resolve dynamic imports, reflection, monkey patching, or all attribute calls. It deliberately does not execute target code. The graph and features are point-4 artifacts, not a risk classifier or a trained ML dataset yet.
+Static analysis is syntactic and static: it cannot fully resolve dynamic imports, reflection, monkey patching, or all attribute calls. It deliberately does not execute target code. The point-5 graphs describe one version of each repository's code; they are not yet a labelled, per-pull-request training dataset.
