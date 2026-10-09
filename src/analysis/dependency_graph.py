@@ -46,6 +46,16 @@ def build_dependency_graph(ast_data: dict[str, Any]) -> dict[str, Any]:
             node_by_id.setdefault(target_id, {"id": target_id, "type": "external_callable", "name": external,
                                                "qualified_name": external, "parent_id": None})
         edges.add((relation["source_id"], target_id, "CALLS"))
+    # INHERITS: class -> parent class, resolved with exactly the same rules as calls.
+    # A parent outside the project shares the "external_callable" node used when that
+    # class is called elsewhere (e.g. urllib3.PoolManager), so each outside thing is one node.
+    for relation in ast_data.get("inherits", []):
+        target_id, external = _resolve_call(relation, names, qualified, modules, module_aliases)
+        if target_id is None:
+            target_id = f"external_callable:{external}"
+            node_by_id.setdefault(target_id, {"id": target_id, "type": "external_callable", "name": external,
+                                               "qualified_name": external, "parent_id": None})
+        edges.add((relation["source_id"], target_id, "INHERITS"))
     graph_edges = [{"source": source, "target": target, "type": edge_type}
                    for source, target, edge_type in sorted(edges)]
     nodes = [node_by_id[node_id] for node_id in sorted(node_by_id)]

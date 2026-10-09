@@ -31,6 +31,7 @@ def extract_repository_ast(repository_path: str | Path, analysis_settings: dict[
     symbols: list[dict[str, Any]] = []
     imports: list[dict[str, str]] = []
     calls: list[dict[str, Any]] = []
+    inherits: list[dict[str, Any]] = []
     module_aliases: dict[str, dict[str, str]] = {}
     errors: list[dict[str, str]] = []
     parsed_files: list[str] = []
@@ -49,6 +50,7 @@ def extract_repository_ast(repository_path: str | Path, analysis_settings: dict[
         symbols.extend(visitor.symbols)
         imports.extend(visitor.imports)
         calls.extend(visitor.calls)
+        inherits.extend(visitor.inherits)
         if visitor.aliases:
             module_aliases[visitor.module_symbol["id"]] = dict(sorted(visitor.aliases.items()))
     return {
@@ -59,6 +61,8 @@ def extract_repository_ast(repository_path: str | Path, analysis_settings: dict[
         "symbols": sorted(symbols, key=lambda symbol: symbol["id"]),
         "imports": sorted(imports, key=lambda edge: (edge["source_id"], edge["target_module"])),
         "calls": sorted(calls, key=lambda edge: (edge["source_id"], edge["target_name"])),
+        # One record per (class, parent class) pair, resolved like calls.
+        "inherits": sorted(inherits, key=lambda edge: (edge["source_id"], edge["target_name"])),
         # For each module ID: which local names were imported, and from where.
         # Used to follow re-exports such as ``from .models import Response`` in __init__.py.
         "module_aliases": module_aliases,
@@ -137,6 +141,7 @@ class _SymbolVisitor(ast.NodeVisitor):
         self.symbols: list[dict[str, Any]] = []
         self.imports: list[dict[str, str]] = []
         self.calls: list[dict[str, Any]] = []
+        self.inherits: list[dict[str, Any]] = []
         self.aliases: dict[str, str] = {}
         self.local_names: set[str] = set()
         self.scope: list[dict[str, str]] = []
@@ -166,6 +171,13 @@ class _SymbolVisitor(ast.NodeVisitor):
         symbol = self._push_symbol("class", node.name, node.lineno, getattr(node, "end_lineno", node.lineno))
         symbol.update({"base_classes": [_expression_name(base) for base in node.bases],
                        "loc": _loc(node), "docstring": bool(ast.get_docstring(node))})
+        for base in node.bases:
+            # Generic[T] / BaseList[int]: the parent is the part before the brackets.
+            raw = _expression_name(base.value if isinstance(base, ast.Subscript) else base)
+            qualified, via_import, is_builtin = self._qualify(raw)
+            if not is_builtin:  # object, Exception, dict, ... are not project coupling
+                self.inherits.append({"source_id": symbol["id"], "target_name": raw,
+                                      "qualified_target": qualified, "via_import": via_import})
         self.generic_visit(node)
         self._pop_symbol()
 
@@ -243,22 +255,31 @@ class _SymbolVisitor(ast.NodeVisitor):
                 return symbol["qualified_name"]
         return None
 
-    def visit_Call(self, node: ast.Call) -> None:
-        raw = _expression_name(node.func)
+    def _qualify(self, raw: str) -> tuple[str | None, bool, bool]:
+        """Work out the full name behind a dotted reference such as ``helper`` or ``models.Response``.
+
+        Returns ``(full_name or None, via_import, is_builtin)``. Shared by calls and
+        base classes so both follow imports, ``self``/``cls`` and same-file definitions
+        in exactly the same way.
+        """
         first, _, rest = raw.partition(".")
-        qualified: str | None = None
-        via_import = False
         if first in {"self", "cls"}:
             owner = self._enclosing_class()
-            # Only direct attribute calls (self.method()); self.x.y() depends on runtime types.
+            # Only direct attribute references (self.method()); self.x.y() depends on runtime types.
             if owner and rest and "." not in rest:
-                qualified = f"{owner}.{rest}"
-        elif first in self.aliases:
-            qualified = self.aliases[first] + (f".{rest}" if rest else "")
-            via_import = True
-        elif first in self.local_names:
-            qualified = f"{self.module_name}.{raw}"
-        elif not rest and first in BUILTIN_NAMES:
+                return f"{owner}.{rest}", False, False
+            return None, False, False
+        if first in self.aliases:
+            return self.aliases[first] + (f".{rest}" if rest else ""), True, False
+        if first in self.local_names:
+            return f"{self.module_name}.{raw}", False, False
+        # len(), print(), ValueError, object, ... (only when not shadowed by an import or definition).
+        return None, False, not rest and first in BUILTIN_NAMES
+
+    def visit_Call(self, node: ast.Call) -> None:
+        raw = _expression_name(node.func)
+        qualified, via_import, is_builtin = self._qualify(raw)
+        if is_builtin:
             # len(), print(), isinstance(), ValueError(), ... say nothing about how the
             # project's own parts depend on each other, so they are not recorded. Calls
             # inside the brackets (len(helper())) are still visited below.

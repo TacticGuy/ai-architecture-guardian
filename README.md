@@ -59,7 +59,8 @@ By default it skips test directories, common virtual environment/build/cache dir
 
 - `CONTAINS`: module → class/function and class → method;
 - `IMPORTS`: a symbol scope → imported local/external module;
-- `CALLS`: a symbol scope → locally resolved or external callable.
+- `CALLS`: a symbol scope → locally resolved or external callable;
+- `INHERITS`: a class → its parent class (project class, or an external class stored as an `external_callable` node). Built-in parents such as `object` or `Exception` are skipped.
 
 Resolution is intentionally conservative. Ambiguous call names remain external nodes rather than being guessed.
 
