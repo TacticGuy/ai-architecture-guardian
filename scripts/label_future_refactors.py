@@ -40,11 +40,16 @@ def main(argv: list[str] | None = None) -> int:
         print("Raw PRs or filtered refactor events are missing. Run scrape_prs.py and filter_prs.py first.")
         return 2
 
-    raw = list(iter_jsonl(args.raw))
-    candidate_events = list(iter_jsonl(args.events))
+    raw_rows = list(iter_jsonl(args.raw))
+    candidate_rows = list(iter_jsonl(args.events))
     if args.repo:
-        raw = [record for record in raw if record.get("repo") == args.repo]
-        candidate_events = [record for record in candidate_events if record.get("repo") == args.repo]
+        raw_rows = [record for record in raw_rows if record.get("repo") == args.repo]
+        candidate_rows = [record for record in candidate_rows if record.get("repo") == args.repo]
+    raw = _unique_records(raw_rows)
+    candidate_events = _unique_records(candidate_rows)
+    duplicate_count = len(raw_rows) - len(raw)
+    if duplicate_count:
+        print(f"Deduplicated raw PR rows: {duplicate_count}")
     if not raw:
         print("No matching raw PR records found.")
         return 2
