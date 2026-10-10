@@ -28,8 +28,10 @@ def predict_graph(graph_path: str | Path, checkpoint_path: str | Path,
         if not hasattr(graph[node_type], "touched_mask"):
             raise ValueError(f"Graph has no touched_mask for node type {node_type!r}")
     feature_count = len(checkpoint["feature_names"])
-    mean = checkpoint["feature_mean"].to(dtype=torch.float32)
-    std = checkpoint["feature_std"].to(dtype=torch.float32)
+    # Graphs are loaded on CPU. Normalise there before transferring the complete
+    # graph to CUDA; map_location may have placed checkpoint tensors on the GPU.
+    mean = checkpoint["feature_mean"].to(device="cpu", dtype=torch.float32)
+    std = checkpoint["feature_std"].to(device="cpu", dtype=torch.float32)
     if mean.numel() != feature_count or std.numel() != feature_count:
         raise ValueError("Checkpoint feature scaler does not match its feature names")
     for node_type in graph.node_types:
