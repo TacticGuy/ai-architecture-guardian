@@ -7,6 +7,7 @@ logs/*.log
 data/raw/*.jsonl
 data/raw/*.json
 data/filtered/*.jsonl
+data/labels/*.jsonl
 data/statistics/*.json
 data/statistics/*.jsonl
 data/repositories/*
@@ -16,3 +17,5 @@ data/analysis/*
 data/pyg/*
 !data/pyg/.gitkeep
 data/pr_samples/
+data/future_pr_samples/
+models/*.pt

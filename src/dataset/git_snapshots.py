@@ -56,11 +56,15 @@ def detached_snapshot(repository_path: str | Path, commit_sha: str,
     if target.exists():
         raise GitSnapshotError(f"Snapshot destination already exists: {target}")
     target.parent.mkdir(parents=True, exist_ok=True)
-    _git(repository, "worktree", "add", "--detach", str(target), sha)
+    # Historical repositories can contain paths beyond Windows' legacy MAX_PATH.
+    # Apply this only to the temporary worktree command; no repository config is changed.
+    _git(repository, "-c", "core.longpaths=true", "worktree", "add", "--detach", str(target), sha)
     try:
         yield target
     finally:
-        result = _git_result(repository, "worktree", "remove", "--force", str(target))
+        result = _git_result(
+            repository, "-c", "core.longpaths=true", "worktree", "remove", "--force", str(target)
+        )
         if result.returncode != 0:
             raise GitSnapshotError(
                 f"Could not remove temporary worktree {target}: {result.stderr.strip()}"
