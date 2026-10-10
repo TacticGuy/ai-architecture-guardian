@@ -90,6 +90,24 @@ def write_python_diff(repository_path: str | Path, pair: CommitPair,
     return output
 
 
+def changed_python_files(repository_path: str | Path, pair: CommitPair) -> list[str]:
+    """Return sorted Python paths changed between BEFORE and AFTER."""
+    repository = _repository(repository_path)
+    before = _validated_sha(pair.before_sha)
+    after = _validated_sha(pair.after_sha)
+    output = _git(
+        repository,
+        "diff",
+        "--name-only",
+        "--diff-filter=ACMR",
+        before,
+        after,
+        "--",
+        "*.py",
+    )
+    return sorted(line.strip().replace("\\", "/") for line in output.splitlines() if line.strip())
+
+
 def _validated_sha(value: str) -> str:
     if not isinstance(value, str) or not _FULL_SHA.fullmatch(value):
         raise GitSnapshotError(f"Expected a full 40-character commit SHA, got {value!r}")
@@ -120,4 +138,3 @@ def _git_result(repository: Path, *arguments: str) -> subprocess.CompletedProces
         encoding="utf-8",
         errors="replace",
     )
-
