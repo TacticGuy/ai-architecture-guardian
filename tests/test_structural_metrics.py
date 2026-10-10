@@ -34,6 +34,10 @@ def features(complexities: list[int] = [2, 4]) -> dict:
 def test_metrics_have_expected_values_for_directed_triangle():
     metrics = calculate_structural_metrics(graph([("a", "b"), ("b", "c"), ("c", "a")]), features())
     assert metrics["module_count"] == 3
+    assert metrics["node_count"] == 3
+    assert metrics["edge_count"] == 3
+    assert metrics["import_edge_count"] == 3
+    assert metrics["call_edge_count"] == 0
     assert metrics["internal_import_edge_count"] == 3
     assert metrics["dependency_density"] == pytest.approx(0.5)
     assert metrics["mean_out_degree"] == pytest.approx(1.0)
@@ -43,6 +47,7 @@ def test_metrics_have_expected_values_for_directed_triangle():
     assert metrics["cyclic_component_count"] == 1
     assert metrics["module_loc"] == 60
     assert metrics["callable_count"] == 2
+    assert metrics["total_cyclomatic_complexity"] == 6
     assert metrics["mean_cyclomatic_complexity"] == pytest.approx(3.0)
     assert metrics["max_cyclomatic_complexity"] == 4
 
@@ -67,5 +72,9 @@ def test_comparison_is_signed_after_minus_before_for_every_metric():
     assert comparison["delta"]["internal_import_edge_count"] == 1
     assert comparison["delta"]["callable_count"] == 1
     assert comparison["delta"]["max_cyclomatic_complexity"] == 3
+    assert comparison["change"]["added_edge_count"] == 1
+    assert comparison["change"]["removed_edge_count"] == 0
+    assert comparison["change"]["node_jaccard_distance"] == 0.0
+    assert comparison["change"]["edge_jaccard_distance"] == pytest.approx(0.5)
     for name, before in comparison["before"].items():
         assert comparison["delta"][name] == pytest.approx(comparison["after"][name] - before)

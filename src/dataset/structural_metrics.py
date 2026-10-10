@@ -8,6 +8,12 @@ from src.dataset.module_graph import cyclic_components, module_import_adjacency
 
 
 METRIC_NAMES: tuple[str, ...] = (
+    "node_count",
+    "edge_count",
+    "contains_edge_count",
+    "import_edge_count",
+    "call_edge_count",
+    "inheritance_edge_count",
     "module_count",
     "internal_import_edge_count",
     "dependency_density",
@@ -18,6 +24,7 @@ METRIC_NAMES: tuple[str, ...] = (
     "cyclic_component_count",
     "module_loc",
     "callable_count",
+    "total_cyclomatic_complexity",
     "mean_cyclomatic_complexity",
     "max_cyclomatic_complexity",
 )
@@ -51,7 +58,17 @@ def calculate_structural_metrics(graph: dict[str, Any], features: dict[str, Any]
         for row in feature_rows
         if row.get("node_type") in {"function", "method"}
     ]
+    edge_counts = {
+        edge_type: sum(1 for edge in graph["edges"] if edge["type"] == edge_type)
+        for edge_type in ("CONTAINS", "IMPORTS", "CALLS", "INHERITS")
+    }
     return {
+        "node_count": len(graph["nodes"]),
+        "edge_count": len(graph["edges"]),
+        "contains_edge_count": edge_counts["CONTAINS"],
+        "import_edge_count": edge_counts["IMPORTS"],
+        "call_edge_count": edge_counts["CALLS"],
+        "inheritance_edge_count": edge_counts["INHERITS"],
         "module_count": n,
         "internal_import_edge_count": m,
         "dependency_density": density,
@@ -62,6 +79,7 @@ def calculate_structural_metrics(graph: dict[str, Any], features: dict[str, Any]
         "cyclic_component_count": len(cyclic_components(adjacency)),
         "module_loc": module_loc,
         "callable_count": len(callable_complexities),
+        "total_cyclomatic_complexity": sum(callable_complexities),
         "mean_cyclomatic_complexity": (
             sum(callable_complexities) / len(callable_complexities) if callable_complexities else 0.0
         ),
@@ -79,7 +97,34 @@ def compare_structural_metrics(
     before = calculate_structural_metrics(before_graph, before_features)
     after = calculate_structural_metrics(after_graph, after_features)
     delta = {name: after[name] - before[name] for name in METRIC_NAMES}
-    return {"schema_version": 1, "before": before, "after": after, "delta": delta}
+    return {
+        "schema_version": 1,
+        "before": before,
+        "after": after,
+        "delta": delta,
+        "change": _graph_change(before_graph, after_graph),
+    }
+
+
+def _graph_change(before_graph: dict[str, Any], after_graph: dict[str, Any]) -> dict[str, int | float]:
+    """Set-based graph edit counts and Jaccard distances in ``[0, 1]``."""
+    before_nodes = {node["id"] for node in before_graph["nodes"]}
+    after_nodes = {node["id"] for node in after_graph["nodes"]}
+    before_edges = {(edge["source"], edge["type"], edge["target"]) for edge in before_graph["edges"]}
+    after_edges = {(edge["source"], edge["type"], edge["target"]) for edge in after_graph["edges"]}
+    return {
+        "added_node_count": len(after_nodes - before_nodes),
+        "removed_node_count": len(before_nodes - after_nodes),
+        "added_edge_count": len(after_edges - before_edges),
+        "removed_edge_count": len(before_edges - after_edges),
+        "node_jaccard_distance": _jaccard_distance(before_nodes, after_nodes),
+        "edge_jaccard_distance": _jaccard_distance(before_edges, after_edges),
+    }
+
+
+def _jaccard_distance(left: set[Any], right: set[Any]) -> float:
+    union = left | right
+    return 1.0 - len(left & right) / len(union) if union else 0.0
 
 
 def _undirected_projection(
