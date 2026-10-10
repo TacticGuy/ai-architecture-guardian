@@ -105,12 +105,16 @@ class PullRequestScraper:
         if not isinstance(number, int):
             raise RuntimeError(f"PR returned without numeric number in {owner}/{name}")
         author = node.get("author")
+        merge_commit = node.get("mergeCommit")
+        merge_commit_sha = (merge_commit.get("oid") if isinstance(merge_commit, dict)
+                            and isinstance(merge_commit.get("oid"), str) else None)
         return {
             "pr_id": f"{owner}/{name}#{number}", "repo": f"{owner}/{name}", "owner": owner, "repo_name": name,
             "pr_number": number, "title": node.get("title") if isinstance(node.get("title"), str) else "",
             "body": node.get("body") if isinstance(node.get("body"), str) else "", "url": node.get("url") if isinstance(node.get("url"), str) else "",
             "state": node.get("state") if isinstance(node.get("state"), str) else "MERGED", "merged": bool(node.get("merged")),
             "created_at": node.get("createdAt"), "updated_at": node.get("updatedAt"), "merged_at": node.get("mergedAt"),
+            "merge_commit_sha": merge_commit_sha,
             "author": author.get("login") if isinstance(author, dict) and isinstance(author.get("login"), str) else None,
             "changed_files": node.get("changedFiles") if isinstance(node.get("changedFiles"), int) else None,
             "commit_messages": self._messages(((node.get("commits") or {}).get("nodes"))),

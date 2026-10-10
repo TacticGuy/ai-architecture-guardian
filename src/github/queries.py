@@ -8,6 +8,7 @@ query PullRequests($owner: String!, $name: String!, $cursor: String, $pageSize: 
       pageInfo { hasNextPage endCursor }
       nodes {
         number title body url state merged mergedAt createdAt updatedAt changedFiles
+        mergeCommit { oid }
         author { login }
         commits(first: $commitsFirst) {
           pageInfo { hasNextPage endCursor }
