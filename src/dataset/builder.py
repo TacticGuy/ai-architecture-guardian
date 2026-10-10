@@ -15,6 +15,7 @@ from src.dataset.git_snapshots import (
     resolve_commit_pair,
     write_python_diff,
 )
+from src.dataset.structural_metrics import compare_structural_metrics
 from src.ml.hetero_data import build_hetero_data, save_hetero_data
 
 
@@ -60,7 +61,14 @@ def build_pr_sample(pr: dict[str, Any], repository_path: str | Path,
         results[state] = analysis
 
     label = create_cycle_label(results["before"]["graph"], results["after"]["graph"], changed_paths)
+    metrics = compare_structural_metrics(
+        results["before"]["graph"],
+        results["before"]["features"],
+        results["after"]["graph"],
+        results["after"]["features"],
+    )
     _write_json(sample_dir / "label.json", label)
+    _write_json(sample_dir / "metrics.json", metrics)
     metadata = {
         "schema_version": 1,
         "sample_id": sample_id,
@@ -74,6 +82,7 @@ def build_pr_sample(pr: dict[str, Any], repository_path: str | Path,
         "before_graph_path": "before/graph.pt",
         "after_graph_path": "after/graph.pt",
         "label_path": "label.json",
+        "metrics_path": "metrics.json",
         "label": label["label"],
         "built_at": datetime.now(timezone.utc).isoformat(),
     }

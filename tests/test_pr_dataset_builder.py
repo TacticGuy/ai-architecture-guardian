@@ -72,6 +72,7 @@ def test_builds_complete_positive_graph_pair_sample(tmp_path):
     assert metadata["sample_id"] == "example/project#7"
     assert metadata["label"] == 1
     assert metadata["changed_python_files"] == ["pkg/b.py"]
+    assert metadata["metrics_path"] == "metrics.json"
     assert (sample / "diff.patch").is_file()
     assert load_hetero_data(sample / "before/graph.pt").schema_version == 1
     assert load_hetero_data(sample / "after/graph.pt").schema_version == 1
@@ -80,6 +81,11 @@ def test_builds_complete_positive_graph_pair_sample(tmp_path):
     assert label["reason"] == "new_dependency_cycle"
     assert label["new_cycles"] == [["pkg.a", "pkg.b"]]
     assert label["touched_modules"] == ["pkg.b"]
+
+    metrics = json.loads((sample / "metrics.json").read_text(encoding="utf-8"))
+    assert metrics["delta"]["internal_import_edge_count"] == 1
+    assert metrics["delta"]["cyclic_component_count"] == 1
+    assert metrics["before"]["module_count"] == metrics["after"]["module_count"] == 3
 
 
 def test_excludes_pr_without_python_changes_before_creating_output(tmp_path):
