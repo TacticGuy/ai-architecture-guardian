@@ -31,6 +31,7 @@ def main() -> int:
                                  int(settings["impact_min_changed_files"]), list(settings["semantic_keywords"]), stats)
     logger.info("Filtering completed: %d accepted from %d raw PRs", count, stats.total_raw_prs)
     print(f"Filtering complete: {count} accepted from {stats.total_raw_prs} raw PRs")
+    print(f"Automation rejected: {stats.automation_rejected}")
     print(f"Impact passed/rejected: {stats.impact_passed}/{stats.impact_rejected}")
     print(f"Semantic passed/rejected: {stats.semantic_passed}/{stats.semantic_rejected}")
     return 0
