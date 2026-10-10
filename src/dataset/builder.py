@@ -22,6 +22,10 @@ class DatasetBuildError(RuntimeError):
     """A PR record is incomplete or its output location is unsafe to reuse."""
 
 
+class DatasetSampleExcluded(RuntimeError):
+    """A valid PR is unsuitable for this Python graph dataset."""
+
+
 def build_pr_sample(pr: dict[str, Any], repository_path: str | Path,
                     output_root: str | Path, analysis_settings: dict[str, Any]) -> dict[str, Any]:
     """Create diff, BEFORE/AFTER analysis, HeteroData graphs, label and metadata."""
@@ -40,9 +44,11 @@ def build_pr_sample(pr: dict[str, Any], repository_path: str | Path,
     sample_dir = Path(output_root) / repo_name.replace("/", "__") / str(pr_number)
     if sample_dir.exists():
         raise DatasetBuildError(f"Sample output already exists: {sample_dir}")
+    changed_paths = changed_python_files(repository_path, pair)
+    if not changed_paths:
+        raise DatasetSampleExcluded(f"PR {sample_id} changes no Python files")
     sample_dir.mkdir(parents=True)
     worktree_root = Path(output_root) / ".worktrees" / uuid4().hex
-    changed_paths = changed_python_files(repository_path, pair)
     write_python_diff(repository_path, pair, sample_dir / "diff.patch")
 
     results: dict[str, dict[str, Any]] = {}
@@ -79,4 +85,3 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     temporary.replace(path)
-

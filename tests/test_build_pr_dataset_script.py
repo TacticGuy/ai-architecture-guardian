@@ -41,7 +41,9 @@ def test_batch_limits_work_skips_existing_and_records_failures(tmp_path, monkeyp
     write_records(raw)
     existing = output / "org__repo" / "1"
     existing.mkdir(parents=True)
-    (existing / "metadata.json").write_text("{}", encoding="utf-8")
+    (existing / "metadata.json").write_text(
+        json.dumps({"changed_python_files": ["pkg/core.py"]}), encoding="utf-8"
+    )
 
     def fake_build(pr, repository_path, output_root, analysis_settings):
         if pr["pr_number"] == 3:
@@ -62,12 +64,44 @@ def test_batch_limits_work_skips_existing_and_records_failures(tmp_path, monkeyp
     assert summary["attempted"] == 2
     assert summary["built"] == 1
     assert summary["skipped"] == 1
+    assert summary["excluded"] == 0
     assert summary["failed"] == 1
     assert summary["failures"][0]["pr_id"] == "org/repo#3"
     printed = capsys.readouterr().out
     assert "Skipped existing: org/repo#1" in printed
     assert "Built: org/repo#2 label=0" in printed
     assert "Failed: org/repo#3" in printed
+
+
+def test_zero_python_samples_are_excluded_without_using_the_build_limit(tmp_path, monkeypatch, capsys):
+    script = load_script()
+    raw = tmp_path / "raw.jsonl"
+    clone = tmp_path / "clone"
+    output = tmp_path / "samples"
+    (clone / ".git").mkdir(parents=True)
+    write_records(raw)
+    calls: list[int] = []
+
+    def fake_build(pr, repository_path, output_root, analysis_settings):
+        calls.append(pr["pr_number"])
+        if pr["pr_number"] == 1:
+            raise script.DatasetSampleExcluded("no Python files")
+        return {"sample_id": pr["pr_id"], "label": 0}
+
+    monkeypatch.setattr(script, "build_pr_sample", fake_build)
+    status = script.main([
+        "--repo", "org/repo", "--max-samples", "2", "--raw", str(raw),
+        "--repository-path", str(clone), "--output-dir", str(output),
+    ])
+
+    assert status == 0
+    assert calls == [1, 2, 3]
+    summary = json.loads((output / "org__repo" / "last_run.json").read_text(encoding="utf-8"))
+    assert summary["attempted"] == 2
+    assert summary["built"] == 2
+    assert summary["excluded"] == 1
+    assert summary["exclusions"] == [{"pr_id": "org/repo#1", "reason": "no_python_files"}]
+    assert "Excluded: org/repo#1" in capsys.readouterr().out
 
 
 def test_missing_clone_explains_how_to_create_it(tmp_path, capsys):

@@ -11,7 +11,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from src.dataset.builder import build_pr_sample
+from src.dataset.builder import DatasetSampleExcluded, build_pr_sample
 from src.storage.jsonl import JSONLFormatError, iter_jsonl
 from src.utils.config import load_settings
 
@@ -49,40 +49,56 @@ def main(argv: list[str] | None = None) -> int:
 
     settings = load_settings(ROOT / "config/settings.json")
     analysis_settings = settings["static_analysis"]
-    built = skipped = 0
+    built = skipped = excluded = 0
     failures: list[dict[str, Any]] = []
-    attempted = 0
+    exclusions: list[dict[str, Any]] = []
     for pr in records:
         number = pr.get("pr_number")
         sample_dir = args.output_dir / args.repo.replace("/", "__") / str(number)
         if (sample_dir / "metadata.json").is_file():
+            try:
+                existing = json.loads((sample_dir / "metadata.json").read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                existing = {}
+            if not existing.get("changed_python_files"):
+                excluded += 1
+                exclusions.append({"pr_id": pr.get("pr_id"), "reason": "no_python_files"})
+                print(f"Excluded existing: {args.repo}#{number} (no Python files)")
+                continue
             skipped += 1
             print(f"Skipped existing: {args.repo}#{number}")
             continue
-        if args.max_samples is not None and attempted >= args.max_samples:
+        if args.max_samples is not None and built + len(failures) >= args.max_samples:
             break
-        attempted += 1
         try:
             metadata = build_pr_sample(pr, repository_path, args.output_dir, analysis_settings)
             built += 1
             print(f"Built: {metadata['sample_id']} label={metadata['label']}")
+        except DatasetSampleExcluded as exc:
+            excluded += 1
+            exclusions.append({"pr_id": pr.get("pr_id"), "reason": "no_python_files"})
+            print(f"Excluded: {pr.get('pr_id')} ({exc})")
         except Exception as exc:  # One malformed historical PR must not abort the batch.
             failure = {"pr_id": pr.get("pr_id"), "error_type": type(exc).__name__, "error": str(exc)}
             failures.append(failure)
             print(f"Failed: {pr.get('pr_id')} ({type(exc).__name__}: {exc})")
 
+    attempted = built + len(failures)
     summary = {
         "schema_version": 1,
         "repo": args.repo,
         "attempted": attempted,
         "built": built,
         "skipped": skipped,
+        "excluded": excluded,
         "failed": len(failures),
+        "exclusions": exclusions,
         "failures": failures,
         "finished_at": datetime.now(timezone.utc).isoformat(),
     }
     _write_summary(args.output_dir / args.repo.replace("/", "__") / "last_run.json", summary)
-    print(f"Summary: attempted={attempted} built={built} skipped={skipped} failed={len(failures)}")
+    print(f"Summary: attempted={attempted} built={built} skipped={skipped} "
+          f"excluded={excluded} failed={len(failures)}")
     return 0 if not failures else 1
 
 

@@ -4,7 +4,9 @@ import json
 from pathlib import Path
 import subprocess
 
-from src.dataset.builder import build_pr_sample
+import pytest
+
+from src.dataset.builder import DatasetSampleExcluded, build_pr_sample
 from src.ml.hetero_data import load_hetero_data
 
 
@@ -79,3 +81,21 @@ def test_builds_complete_positive_graph_pair_sample(tmp_path):
     assert label["new_cycles"] == [["pkg.a", "pkg.b"]]
     assert label["touched_modules"] == ["pkg.b"]
 
+
+def test_excludes_pr_without_python_changes_before_creating_output(tmp_path):
+    repository, _ = repository_with_new_cycle(tmp_path)
+    git(repository, "switch", "-c", "docs-only")
+    (repository / "README.md").write_text("documentation\n", encoding="utf-8")
+    git(repository, "add", "README.md")
+    git(repository, "commit", "-m", "docs")
+    docs_sha = git(repository, "rev-parse", "HEAD")
+    output = tmp_path / "samples-no-python"
+
+    with pytest.raises(DatasetSampleExcluded, match="changes no Python files"):
+        build_pr_sample(
+            {"repo": "org/repo", "pr_number": 2, "merge_commit_sha": docs_sha},
+            repository,
+            output,
+            analysis_settings(),
+        )
+    assert not (output / "org__repo" / "2").exists()
