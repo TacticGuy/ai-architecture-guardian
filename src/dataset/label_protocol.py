@@ -87,6 +87,14 @@ def validate_event_reviews(
         decision = review.get("decision")
         if decision not in {"architecture_refactor", "non_architectural", "uncertain"}:
             raise ValueError(f"Invalid event review decision for {identifier}")
+        candidate_eligible = review.get("candidate_training_eligible", True)
+        if not isinstance(candidate_eligible, bool):
+            raise ValueError(f"Review {identifier} has invalid candidate_training_eligible")
+        if candidate_eligible is False and (
+            not isinstance(review.get("candidate_exclusion_reason"), str)
+            or not review["candidate_exclusion_reason"].strip()
+        ):
+            raise ValueError(f"Review {identifier} needs candidate_exclusion_reason")
         if decision == "uncertain":
             continue
         for field in ("reviewer", "rationale"):

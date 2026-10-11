@@ -76,3 +76,23 @@ def test_old_checkpoint_cannot_invent_split_membership_from_a_seed():
     split_map, source = _resolve_splits(records, {"seed": 42}, allow_smoke=True)
     assert split_map == {"owner/repo#1": "unknown"}
     assert source == "unknown_smoke_only"
+
+
+def test_checkpoint_can_prove_and_exclude_purged_samples():
+    records = [
+        {"sample_id": "owner/repo#train", "label": 1},
+        {"sample_id": "owner/repo#purged", "label": 0},
+    ]
+    checkpoint = {
+        "split_sample_ids": {
+            "train": ["owner/repo#train"],
+            "validation": [],
+            "test": [],
+            "purged": ["owner/repo#purged"],
+        }
+    }
+
+    split_map, source = _resolve_splits(records, checkpoint)
+
+    assert split_map == {"owner/repo#train": "train"}
+    assert source == "checkpoint"

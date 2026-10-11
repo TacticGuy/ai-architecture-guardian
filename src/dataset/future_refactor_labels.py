@@ -89,6 +89,7 @@ def assign_future_refactor_labels(
     history_matches: Mapping[str, Mapping[str, Mapping[str, Any]]] | None = None,
     unresolved_events: Iterable[dict[str, Any]] = (),
     samples_with_extraction_errors: Iterable[str] = (),
+    ineligible_samples: Mapping[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     """Assign an observed file-overlap outcome, without claiming PR causation.
 
@@ -118,6 +119,7 @@ def assign_future_refactor_labels(
     for event in unresolved_events:
         unknown_by_repo[event.get("repo")].append(event)
     extraction_error_ids = set(samples_with_extraction_errors)
+    excluded_candidates = dict(ineligible_samples or {})
 
     labels: list[dict[str, Any]] = []
     for sample in samples:
@@ -143,6 +145,14 @@ def assign_future_refactor_labels(
         }
         if not isinstance(repo, str) or merged_at is None:
             labels.append({**base, "status": "invalid_metadata", "label": None})
+            continue
+        if sample_id in excluded_candidates:
+            labels.append({
+                **base,
+                "status": "excluded_non_substantive_change",
+                "label": None,
+                "candidate_exclusion_reason": excluded_candidates[sample_id],
+            })
             continue
         if not files:
             labels.append({**base, "status": "excluded_no_python_files", "label": None})

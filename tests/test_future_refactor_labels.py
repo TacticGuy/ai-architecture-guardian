@@ -77,6 +77,20 @@ def test_requires_full_six_month_follow_up_before_assigning_negative():
     assert negative["status"] == "labelled" and negative["label"] == 0
 
 
+def test_reviewed_non_substantive_candidate_is_excluded_from_training():
+    sample = pr(1, "2024-01-10T00:00:00Z")
+    result = assign_future_refactor_labels(
+        [sample], [], {"org/repo#1": ["src/pkg/__init__.py"]},
+        window(datetime(2024, 8, 1, tzinfo=timezone.utc)),
+        history_matches=histories("org/repo#1"),
+        ineligible_samples={"org/repo#1": "Package version constant only."},
+    )[0]
+
+    assert result["status"] == "excluded_non_substantive_change"
+    assert result["label"] is None
+    assert result["candidate_exclusion_reason"] == "Package version constant only."
+
+
 def test_different_file_and_event_after_horizon_do_not_make_positive():
     sample = pr(1, "2024-01-10T00:00:00Z")
     events = [reviewed_event(2, "2024-02-10T00:00:00Z", ["pkg/other.py"]),

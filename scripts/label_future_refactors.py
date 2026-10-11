@@ -67,6 +67,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.repo:
             sample_ids = {pr_id(record) for record in raw}
             reviews = [review for review in reviews if review.get("sample_id") in sample_ids]
+        ineligible_samples = {
+            review["sample_id"]: review["candidate_exclusion_reason"].strip()
+            for review in reviews
+            if review.get("candidate_training_eligible") is False
+        }
     except (OSError, ValueError, TypeError, AttributeError) as exc:
         print(f"Labelling blocked: {exc}. No outputs changed.")
         return 2
@@ -137,6 +142,7 @@ def main(argv: list[str] | None = None) -> int:
         history_matches=history_matches,
         unresolved_events=unresolved,
         samples_with_extraction_errors=history_errors,
+        ineligible_samples=ineligible_samples,
     )
 
     labelled = [record for record in labels if record["status"] == "labelled"]
@@ -148,6 +154,7 @@ def main(argv: list[str] | None = None) -> int:
     ratio = (100.0 * positives / len(labelled)) if labelled else 0.0
     print(f"Six-month labels: eligible={len(labelled)} positive={positives} negative={negatives} positive_rate={ratio:.1f}%")
     print(f"Excluded: censored={counts['censored']} no_python={counts['excluded_no_python_files']} "
+          f"non_substantive={counts['excluded_non_substantive_change']} "
           f"invalid={counts['invalid_metadata']} git_errors={counts['git_error']}")
     print(f"Unknown: coverage={counts['unverified_coverage']} outcomes={counts['unreviewed_outcome']} "
           f"file_extraction={counts['incomplete_file_extraction']}")

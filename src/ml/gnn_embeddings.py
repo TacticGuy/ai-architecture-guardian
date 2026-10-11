@@ -32,7 +32,11 @@ def export_gnn_embeddings(
 
     checkpoint = load_gnn_checkpoint(checkpoint_path)
     split_map, split_source = _resolve_splits(records, checkpoint, allow_smoke=allow_smoke)
-    ordered = sorted(records, key=lambda record: record["sample_id"])
+    ordered = sorted(
+        (record for record in records if record["sample_id"] in split_map),
+        key=lambda record: record["sample_id"],
+    )
+    excluded_purged = len(records) - len(ordered)
 
     target_device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
     model = load_gnn_model(checkpoint, target_device)
@@ -84,6 +88,7 @@ def export_gnn_embeddings(
         "checkpoint_name": bundle["checkpoint_name"],
         "split_source": split_source,
         "evaluation_status": bundle["evaluation_status"],
+        "excluded_purged_count": excluded_purged,
         "rows": [
             {
                 "row_index": index,
@@ -102,6 +107,7 @@ def export_gnn_embeddings(
         "embedding_dim": expected_dim,
         "positive": int(labels.sum().item()),
         "negative": int((labels == 0).sum().item()),
+        "excluded_purged": excluded_purged,
         "split_source": split_source,
         "device": str(target_device),
     }
@@ -116,17 +122,26 @@ def _resolve_splits(
         if not isinstance(saved, dict):
             raise ValueError("Checkpoint split_sample_ids must be a mapping")
         split_map: dict[str, str] = {}
+        all_checkpoint_ids: set[str] = set()
         for split_name in ("train", "validation", "test"):
             values = saved.get(split_name)
             if not isinstance(values, list):
                 raise ValueError(f"Checkpoint is missing the {split_name!r} sample ID list")
             for sample_id in values:
-                if sample_id in split_map:
+                if sample_id in all_checkpoint_ids:
                     raise ValueError(f"Checkpoint assigns {sample_id!r} to multiple splits")
+                all_checkpoint_ids.add(sample_id)
                 split_map[sample_id] = split_name
-        if set(split_map) != prepared_ids:
-            missing = sorted(prepared_ids - set(split_map))
-            extra = sorted(set(split_map) - prepared_ids)
+        purged = saved.get("purged", [])
+        if not isinstance(purged, list):
+            raise ValueError("Checkpoint purged sample IDs must be a list")
+        for sample_id in purged:
+            if sample_id in all_checkpoint_ids:
+                raise ValueError(f"Checkpoint assigns {sample_id!r} to multiple splits")
+            all_checkpoint_ids.add(sample_id)
+        if all_checkpoint_ids != prepared_ids:
+            missing = sorted(prepared_ids - all_checkpoint_ids)
+            extra = sorted(all_checkpoint_ids - prepared_ids)
             raise ValueError(
                 "Checkpoint splits do not match the prepared dataset "
                 f"(missing={missing[:3]}, extra={extra[:3]})"

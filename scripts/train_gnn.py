@@ -62,6 +62,7 @@ def main(argv: list[str] | None = None) -> int:
             parser.error("Smoke mode uses its development split; omit temporal cutoffs")
         train_records, validation_records, test_records = stratified_split(records, args.seed)
         split_name = "stratified_smoke"
+        purged_records = []
         purged_count = 0
     else:
         if not args.train_cutoff or not args.validation_cutoff:
@@ -75,6 +76,7 @@ def main(argv: list[str] | None = None) -> int:
         train_records, validation_records, test_records = (
             splits[name] for name in ("train", "validation", "test")
         )
+        purged_records = splits["purged"]
         split_name = "temporal_purged"
         purged_count = len(splits["purged"])
     for name, split_records in (
@@ -160,6 +162,7 @@ def main(argv: list[str] | None = None) -> int:
             "train": [record["sample_id"] for record in train_records],
             "validation": [record["sample_id"] for record in validation_records],
             "test": [record["sample_id"] for record in test_records],
+            "purged": [record["sample_id"] for record in purged_records],
         },
         "results": results,
     }, args.output)

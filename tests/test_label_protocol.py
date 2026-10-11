@@ -75,6 +75,25 @@ def test_review_can_validate_event_without_any_keyword_and_needs_matching_eviden
         )
 
 
+def test_candidate_training_exclusion_requires_a_reason():
+    source = pr(9, "2024-04-10T00:00:00Z")
+    files = {source["pr_id"]: ["pkg/service.py"]}
+    approved = review(source, "non_architectural")
+
+    import pytest
+    with pytest.raises(ValueError, match="candidate_exclusion_reason"):
+        validate_event_reviews(
+            [{**approved, "candidate_training_eligible": False}], [source], files
+        )
+
+    accepted, unresolved = validate_event_reviews(
+        [{**approved, "candidate_training_eligible": False,
+          "candidate_exclusion_reason": "Version metadata only."}], [source], files
+    )
+    assert accepted == []
+    assert unresolved == []
+
+
 def test_review_resolution_changes_unknown_to_observed_outcome_without_claiming_causation():
     sample = pr(1, "2024-01-10T00:00:00Z")
     event = pr(9, "2024-04-10T00:00:00Z")
