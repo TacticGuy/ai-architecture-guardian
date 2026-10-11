@@ -10,7 +10,9 @@ from uuid import uuid4
 
 from src.analysis.pipeline import analyse_repository
 from src.dataset.builder import DatasetBuildError, DatasetSampleExcluded
-from src.dataset.git_snapshots import detached_snapshot, resolve_commit_pair, write_python_diff
+from src.dataset.git_snapshots import (
+    detached_snapshot, resolve_verified_commit_pair, write_python_diff,
+)
 from src.ml.gnn_data import attach_touched_masks
 from src.ml.hetero_data import build_hetero_data, save_hetero_data
 
@@ -40,7 +42,17 @@ def build_future_risk_sample(
     if not changed_paths:
         raise DatasetSampleExcluded(f"PR {repo_name}#{pr_number} changes no analysed Python files")
 
-    pair = resolve_commit_pair(repository_path, merge_sha)
+    if label_record.get("label_protocol_version") != 3:
+        raise DatasetBuildError("Future-risk graphs require corrected label protocol v3")
+    pair = resolve_verified_commit_pair(repository_path, label_record)
+    if label == 1 and not isinstance(label_record.get("history_evidence"), dict):
+        raise DatasetBuildError("Positive label lacks verified commit/file-history evidence")
+    if label == 1 and (
+        label_record["history_evidence"].get("sample_after_sha") != pair.after_sha
+        or label_record["history_evidence"].get("ancestry_verified") is not True
+        or label_record["history_evidence"].get("file_identity") != "unchanged_paths"
+    ):
+        raise DatasetBuildError("Positive label history evidence does not match this PR")
     sample_id = f"{repo_name}#{pr_number}"
     output = Path(output_root)
     sample_dir = output / repo_name.replace("/", "__") / str(pr_number)
@@ -67,12 +79,24 @@ def build_future_risk_sample(
             "merged_at": label_record.get("merged_at"),
             "merge_commit_sha": pair.after_sha,
             "before_commit_sha": pair.before_sha,
+            "head_ref_sha": label_record.get("head_ref_sha"),
+            "commit_count": label_record.get("commit_count"),
             "changed_python_files": changed_paths,
             "diff_path": "diff.patch",
             "before_graph_path": "before/graph.pt",
             "label": label,
             "label_type": label_record.get("label_type"),
+            "label_protocol_version": label_record.get("label_protocol_version"),
+            "causal_claim": label_record.get("causal_claim", False),
             "horizon_months": label_record.get("horizon_months"),
+            "horizon_end": label_record.get("horizon_end"),
+            "observation_start": label_record.get("observation_start"),
+            "observation_end": label_record.get("observation_end"),
+            "triggering_refactor_pr": label_record.get("triggering_refactor_pr"),
+            "triggering_refactor_merged_at": label_record.get("triggering_refactor_merged_at"),
+            "matched_python_files": label_record.get("matched_python_files", []),
+            "event_evidence": label_record.get("event_evidence"),
+            "history_evidence": label_record.get("history_evidence"),
             "built_at": datetime.now(timezone.utc).isoformat(),
         }
         _write_json(staging_dir / "metadata.json", metadata)

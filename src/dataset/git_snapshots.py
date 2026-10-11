@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import re
 import subprocess
-from typing import Iterator
+from typing import Any, Iterator
 
 
 _FULL_SHA = re.compile(r"^[0-9a-fA-F]{40}$")
@@ -31,9 +31,9 @@ class CommitPair:
 def resolve_commit_pair(repository_path: str | Path, merge_commit_sha: str) -> CommitPair:
     """Return first-parent BEFORE and merge-commit AFTER SHAs.
 
-    GitHub supplies a full merge commit SHA.  Its first parent is the target branch
-    immediately before the pull request was integrated; the merge commit is the
-    repository state immediately afterward.
+    This is an integration-commit diff, not proof of the whole PR's boundary.
+    Multi-commit rebase integrations require additional verification. Future-risk
+    datasets must use resolve_verified_commit_pair instead.
     """
     repository = _repository(repository_path)
     merge_sha = _validated_sha(merge_commit_sha)
@@ -44,6 +44,57 @@ def resolve_commit_pair(repository_path: str | Path, merge_commit_sha: str) -> C
     if len(parts) < 2:
         raise GitSnapshotError(f"Commit {merge_sha} has no first parent")
     return CommitPair(before_sha=parts[1], after_sha=parts[0])
+
+
+def verified_boundary(parents: list[str], head_ref_sha: object, commit_count: object) -> str:
+    """Reject ambiguous multi-commit squash/rebase rather than use the last commit."""
+    if len(parents) == 2 and isinstance(head_ref_sha, str) and parents[1] == head_ref_sha.lower():
+        return "merge_head_verified"
+    if len(parents) == 1 and type(commit_count) is int and commit_count == 1:
+        return "single_commit_boundary"
+    raise GitSnapshotError("PR integration boundary is unverified (multi-commit rebase/squash or head mismatch)")
+
+
+def resolve_verified_commit_pair(repository_path: str | Path, record: dict[str, Any]) -> CommitPair:
+    repository = _repository(repository_path)
+    sha = _validated_sha(record.get("merge_commit_sha"))
+    fields = _git(repository, "rev-list", "--parents", "-n", "1", sha).split()
+    if not fields or fields[0] != sha:
+        raise GitSnapshotError("PR integration commit could not be resolved")
+    verified_boundary(fields[1:], record.get("head_ref_sha"), record.get("commit_count"))
+    pair = CommitPair(before_sha=fields[1], after_sha=sha)
+    supplied_before = record.get("before_commit_sha")
+    if supplied_before is not None and supplied_before != pair.before_sha:
+        raise GitSnapshotError("Label's before_commit_sha does not match the verified Git boundary")
+    return pair
+
+
+def parse_changed_files(output: str) -> list[dict[str, str | None]]:
+    """Parse NUL-delimited name/status, keeping deletions and both rename paths."""
+    fields = output.split("\0")
+    if fields[-1] == "":
+        fields.pop()
+    changes = []
+    index = 0
+    while index < len(fields):
+        status = fields[index]
+        width = 3 if status.startswith(("R", "C")) else 2
+        if not status or status[0] not in "ACDMRTUXB" or index + width > len(fields):
+            raise GitSnapshotError("Malformed Git name/status output")
+        old = fields[index + 1]
+        new = fields[index + 2] if width == 3 else old
+        changes.append({"status": status,
+                        "before_path": None if status.startswith("A") else old,
+                        "after_path": None if status.startswith("D") else new})
+        index += width
+    return changes
+
+
+def changed_file_records(repository_path: str | Path, pair: CommitPair) -> list[dict[str, str | None]]:
+    repository = _repository(repository_path)
+    output = _git(repository, "diff", "--no-ext-diff", "--no-textconv", "--name-status", "-z",
+                  "--find-renames", _validated_sha(pair.before_sha), _validated_sha(pair.after_sha), "--")
+    return parse_changed_files(output)
 
 
 @contextmanager
@@ -82,6 +133,7 @@ def write_python_diff(repository_path: str | Path, pair: CommitPair,
         "diff",
         "--no-color",
         "--no-ext-diff",
+        "--no-textconv",
         "--unified=3",
         before,
         after,
@@ -95,21 +147,10 @@ def write_python_diff(repository_path: str | Path, pair: CommitPair,
 
 
 def changed_python_files(repository_path: str | Path, pair: CommitPair) -> list[str]:
-    """Return sorted Python paths changed between BEFORE and AFTER."""
-    repository = _repository(repository_path)
-    before = _validated_sha(pair.before_sha)
-    after = _validated_sha(pair.after_sha)
-    output = _git(
-        repository,
-        "diff",
-        "--name-only",
-        "--diff-filter=ACMR",
-        before,
-        after,
-        "--",
-        "*.py",
-    )
-    return sorted(line.strip().replace("\\", "/") for line in output.splitlines() if line.strip())
+    """Return Python paths including deleted files and both sides of renames."""
+    return sorted({path for change in changed_file_records(repository_path, pair)
+                   for path in (change["before_path"], change["after_path"])
+                   if path and path.endswith(".py")})
 
 
 def _validated_sha(value: str) -> str:

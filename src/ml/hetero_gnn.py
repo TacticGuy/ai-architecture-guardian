@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from math import isfinite
 import random
 from typing import Any, Sequence
 
@@ -38,7 +39,8 @@ class HeteroRiskGNN(nn.Module):
             nn.Linear(hidden_channels, 1),
         )
 
-    def forward(self, data: Any) -> torch.Tensor:
+    def encode(self, data: Any) -> torch.Tensor:
+        """Return the fixed pre-classifier graph embedding used for fusion."""
         x = {
             node_type: F.relu(self.input_projection[node_type](data[node_type].x))
             for node_type in self.node_types
@@ -76,7 +78,10 @@ class HeteroRiskGNN(nn.Module):
             )
         else:
             touched_embedding = torch.zeros_like(repository_embedding)
-        return self.classifier(torch.cat([repository_embedding, touched_embedding], dim=1)).squeeze(-1)
+        return torch.cat([repository_embedding, touched_embedding], dim=1)
+
+    def forward(self, data: Any) -> torch.Tensor:
+        return self.classifier(self.encode(data)).squeeze(-1)
 
 
 def stratified_split(records: Sequence[dict[str, Any]], seed: int = 42,
@@ -107,6 +112,12 @@ def stratified_split(records: Sequence[dict[str, Any]], seed: int = 42,
 
 def binary_metrics(labels: Sequence[int], probabilities: Sequence[float],
                    threshold: float = 0.5) -> dict[str, float | int]:
+    if len(labels) != len(probabilities):
+        raise ValueError("Labels and probabilities must have the same length")
+    if any(label not in (0, 1) for label in labels):
+        raise ValueError("Metrics require binary labels")
+    if not isfinite(threshold) or any(not isfinite(p) or not 0 <= p <= 1 for p in probabilities):
+        raise ValueError("Metrics require finite probabilities between zero and one")
     predictions = [int(probability >= threshold) for probability in probabilities]
     tp = sum(label == prediction == 1 for label, prediction in zip(labels, predictions))
     fp = sum(label == 0 and prediction == 1 for label, prediction in zip(labels, predictions))
@@ -116,14 +127,20 @@ def binary_metrics(labels: Sequence[int], probabilities: Sequence[float],
     recall = tp / (tp + fn) if tp + fn else 0.0
     f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
     positives = sum(labels)
-    ranked = sorted(zip(probabilities, labels), reverse=True)
-    hits = 0
-    precision_sum = 0.0
-    for rank, (_, label) in enumerate(ranked, 1):
-        if label:
-            hits += 1
-            precision_sum += hits / rank
-    average_precision = precision_sum / positives if positives else 0.0
+    # AP = sum(precision_at_threshold * increase_in_recall). Equal scores
+    # enter at the same threshold; never break a tie using the true label.
+    groups: dict[float, list[int]] = defaultdict(list)
+    for probability, label in zip(probabilities, labels):
+        groups[float(probability)].append(int(label))
+    hits = seen = 0
+    average_precision = 0.0
+    for probability in sorted(groups, reverse=True):
+        group = groups[probability]
+        new_hits = sum(group)
+        hits += new_hits
+        seen += len(group)
+        if positives:
+            average_precision += (hits / seen) * (new_hits / positives)
     return {
         "count": len(labels), "positives": positives, "threshold": threshold,
         "true_positive": tp, "false_positive": fp, "true_negative": tn, "false_negative": fn,
