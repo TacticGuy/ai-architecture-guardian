@@ -646,3 +646,21 @@ dashboard reads data only through `src/rag/api.py` (`Chatbot`), never from the
 data folders directly, so changing the page cannot change the pipeline. The
 colour pairs were checked for colour-blind safety and contrast; keep each pair
 together. `tests/test_dashboard.py` runs the app headless on test data.
+
+## Rebuild everything for a data version (run_all)
+
+When the GNN teammate delivers a new data version (manifest, GNN embeddings,
+checkpoint and samples), one command rebuilds all of my outputs in order:
+
+```
+python scripts/run_all.py --manifest artifacts/gnn_embeddings_v4.json
+```
+
+Steps: `embeddings` (CodeReviewer vectors) -> `fusion` -> `explain` (XAI layers
+A, B, C) -> `kb` (chatbot knowledge base) -> `eval` (free retrieval check).
+Missing inputs are listed before anything runs. If a step fails, the run stops
+and prints the command to continue, e.g. `--from explain`. Useful options:
+`--from` / `--to` (run part of the chain), `--explain-split all`, `--no-graph`
+(skip layer C), `--with-eval` (full Groq evaluation, about 15 calls). Each run is
+logged in `data/runs/<version>/run.json` with exit codes, durations and SHA-256
+fingerprints of the input files. `tests/test_run_all.py` covers it.
