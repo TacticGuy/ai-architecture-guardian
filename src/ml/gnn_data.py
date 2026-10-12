@@ -91,6 +91,121 @@ def temporal_split(records: list[dict[str, Any]], train_cutoff: str, validation_
     return partitions
 
 
+def temporal_split_by_repository(
+    records: list[dict[str, Any]], cutoffs: dict[str, dict[str, str]]
+) -> dict[str, list[dict[str, Any]]]:
+    """Apply independently chosen temporal cutoffs to each repository.
+
+    Repositories mature at different times.  A single global date can therefore
+    make repository identity a proxy for the split.  V4 uses this strict mapping
+    so every included repository declares its own train and validation boundary.
+    """
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for record in records:
+        repo = _repository_id(record)
+        grouped.setdefault(repo, []).append(record)
+    missing = sorted(set(grouped) - set(cutoffs))
+    extra = sorted(set(cutoffs) - set(grouped))
+    if missing or extra:
+        raise ValueError(f"Repository cutoff mismatch (missing={missing}, extra={extra})")
+    combined = {name: [] for name in ("train", "validation", "test", "purged")}
+    for repo in sorted(grouped):
+        config = cutoffs[repo]
+        if not isinstance(config, dict):
+            raise ValueError(f"Cutoffs for {repo} must be a mapping")
+        split = temporal_split(
+            grouped[repo], config.get("train_cutoff", ""), config.get("validation_cutoff", "")
+        )
+        for name in combined:
+            combined[name].extend(split[name])
+    return combined
+
+
+def repository_holdout_split(
+    records: list[dict[str, Any]], config: dict[str, list[str]],
+) -> dict[str, list[dict[str, Any]]]:
+    """Split by disjoint repositories to measure unseen-project generalisation."""
+    required = {"train", "validation", "test"}
+    if set(config) != required:
+        raise ValueError("Repository split config needs exactly train, validation and test")
+    groups: dict[str, set[str]] = {}
+    for name in sorted(required):
+        values = config[name]
+        if not isinstance(values, list) or not values or not all(
+            isinstance(value, str) and "/" in value for value in values
+        ):
+            raise ValueError(f"Repository split {name} must be a non-empty repository list")
+        groups[name] = set(values)
+    if any(groups[left] & groups[right] for left, right in (
+        ("train", "validation"), ("train", "test"), ("validation", "test")
+    )):
+        raise ValueError("Repository split groups must be disjoint")
+    available = {_repository_id(record) for record in records}
+    configured = set().union(*groups.values())
+    if available != configured:
+        raise ValueError(
+            f"Repository split mismatch (missing={sorted(available - configured)}, "
+            f"extra={sorted(configured - available)})"
+        )
+    result = {name: [] for name in ("train", "validation", "test", "purged")}
+    destination = {repo: name for name, repos in groups.items() for repo in repos}
+    for record in records:
+        result[destination[_repository_id(record)]].append(record)
+    return result
+
+
+def validate_training_cohort(
+    partitions: dict[str, list[dict[str, Any]]], *, min_class_count: int,
+    min_repositories: int,
+) -> dict[str, Any]:
+    """Reject cohorts that make all-risky or repository shortcuts too easy."""
+    if min_class_count < 1 or min_repositories < 1:
+        raise ValueError("Cohort minimums must be positive")
+    report: dict[str, Any] = {"minimum_per_class": min_class_count,
+                              "minimum_repositories": min_repositories, "splits": {}}
+    all_repositories: set[str] = set()
+    problems: list[str] = []
+    for split_name in ("train", "validation", "test"):
+        rows = partitions.get(split_name, [])
+        repositories = {_repository_id(row) for row in rows}
+        all_repositories.update(repositories)
+        labels = {label: sum(int(row["label"]) == label for row in rows) for label in (0, 1)}
+        by_repo: dict[str, dict[str, int]] = {}
+        for repo in sorted(repositories):
+            repo_rows = [row for row in rows if _repository_id(row) == repo]
+            by_repo[repo] = {"safe": sum(int(row["label"]) == 0 for row in repo_rows),
+                             "risky": sum(int(row["label"]) == 1 for row in repo_rows),
+                             "total": len(repo_rows)}
+        report["splits"][split_name] = {
+            "total": len(rows), "safe": labels[0], "risky": labels[1],
+            "repositories": by_repo,
+        }
+        for label, label_name in ((0, "safe"), (1, "risky")):
+            if labels[label] < min_class_count:
+                problems.append(
+                    f"{split_name} has {labels[label]} {label_name} PRs; need at least {min_class_count}"
+                )
+    if len(all_repositories) < min_repositories:
+        problems.append(
+            f"cohort has {len(all_repositories)} repositories; need at least {min_repositories}"
+        )
+    report["repository_count"] = len(all_repositories)
+    report["repositories"] = sorted(all_repositories)
+    if problems:
+        raise ValueError("; ".join(problems))
+    return report
+
+
+def _repository_id(record: dict[str, Any]) -> str:
+    repo = record.get("repo")
+    if isinstance(repo, str) and "/" in repo:
+        return repo
+    sample_id = record.get("sample_id")
+    if isinstance(sample_id, str) and "#" in sample_id:
+        return sample_id.split("#", 1)[0]
+    raise ValueError(f"Cannot determine repository for {sample_id!r}")
+
+
 def attach_touched_masks(data: HeteroData, changed_python_files: Iterable[str]) -> HeteroData:
     """Mark nodes defined in files touched by the PR, preserving all Step 5 features."""
     changed = {path.strip().replace("\\", "/") for path in changed_python_files if path.strip()}

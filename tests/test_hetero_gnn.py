@@ -6,7 +6,7 @@ from torch_geometric.data import Batch
 
 from src.ml.gnn_data import attach_touched_masks
 from src.ml.hetero_data import build_hetero_data
-from src.ml.hetero_gnn import HeteroRiskGNN, binary_metrics, stratified_split
+from src.ml.hetero_gnn import HeteroRiskGNN, _one_hop_masks, binary_metrics, stratified_split
 from tests.test_hetero_data import make_package
 
 
@@ -26,6 +26,41 @@ def test_gnn_returns_one_logit_per_graph_and_backpropagates(tmp_path):
     assert tuple(embeddings.shape) == (2, 16)
     assert torch.allclose(logits, model.classifier(embeddings).squeeze(-1), atol=1e-6)
     assert any(parameter.grad is not None for parameter in model.parameters())
+
+
+@pytest.mark.parametrize("pooling, expected_width", [
+    ("repo_plus_touched", 16), ("touched_only", 8), ("touched_1hop", 8),
+])
+def test_pooling_modes_have_explicit_embedding_width(tmp_path, pooling, expected_width):
+    result = make_package(tmp_path)
+    graph = attach_touched_masks(
+        build_hetero_data(result["graph"], result["features"]), ["src/pkg/core.py"]
+    )
+    model = HeteroRiskGNN(
+        graph.metadata(), graph["module"].x.shape[1], hidden_channels=8,
+        layers=1, dropout=0.0, pooling_mode=pooling,
+    )
+    assert tuple(model.encode(graph).shape) == (1, expected_width)
+    assert model.embedding_dim == expected_width
+
+
+def test_one_hop_expansion_uses_only_original_touched_nodes():
+    class Graph:
+        edge_index_dict = {
+            ("module", "imports", "module"): torch.tensor([[0, 1], [1, 2]]),
+        }
+
+    masks = _one_hop_masks(Graph(), {"module": torch.tensor([True, False, False])})
+    assert masks["module"].tolist() == [True, True, False]
+
+
+def test_unknown_pooling_mode_is_rejected(tmp_path):
+    result = make_package(tmp_path)
+    graph = attach_touched_masks(
+        build_hetero_data(result["graph"], result["features"]), ["src/pkg/core.py"]
+    )
+    with pytest.raises(ValueError, match="pooling_mode"):
+        HeteroRiskGNN(graph.metadata(), graph["module"].x.shape[1], pooling_mode="whole_repo_only")
 
 
 def test_stratified_split_and_metrics_are_deterministic():

@@ -13,15 +13,26 @@ from torch_geometric.nn import HeteroConv, SAGEConv, global_mean_pool
 
 
 class HeteroRiskGNN(nn.Module):
-    """Relation-aware GraphSAGE with touched-area and repository pooling."""
+    """Relation-aware GraphSAGE with an explicit, auditable pooling scope.
+
+    ``repo_plus_touched`` preserves the v3 architecture.  The local modes are
+    intended for v4 shortcut checks: they prevent unrelated repository nodes
+    from entering the final graph embedding after message passing.
+    """
+
+    POOLING_MODES = {"repo_plus_touched", "touched_only", "touched_1hop"}
 
     def __init__(self, metadata: tuple[list[str], list[tuple[str, str, str]]],
                  input_channels: int, hidden_channels: int = 32, layers: int = 2,
-                 dropout: float = 0.2) -> None:
+                 dropout: float = 0.2, pooling_mode: str = "repo_plus_touched") -> None:
         super().__init__()
+        if pooling_mode not in self.POOLING_MODES:
+            raise ValueError(f"pooling_mode must be one of {sorted(self.POOLING_MODES)}")
         node_types, edge_types = metadata
         self.node_types = list(node_types)
         self.dropout = dropout
+        self.pooling_mode = pooling_mode
+        self.embedding_dim = hidden_channels * (2 if pooling_mode == "repo_plus_touched" else 1)
         self.input_projection = nn.ModuleDict({
             node_type: nn.Linear(input_channels, hidden_channels) for node_type in node_types
         })
@@ -33,7 +44,7 @@ class HeteroRiskGNN(nn.Module):
             for _ in range(layers)
         ])
         self.classifier = nn.Sequential(
-            nn.Linear(hidden_channels * 2, hidden_channels),
+            nn.Linear(self.embedding_dim, hidden_channels),
             nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(hidden_channels, 1),
@@ -71,17 +82,49 @@ class HeteroRiskGNN(nn.Module):
         all_batches = torch.cat(batch_indexes, dim=0)
         all_touched = torch.cat(touched, dim=0)
         graph_count = int(data.num_graphs) if hasattr(data, "num_graphs") else 1
+        selected = all_touched
+        if self.pooling_mode == "touched_1hop":
+            selected_by_type = _one_hop_masks(data, {
+                node_type: data[node_type].touched_mask for node_type in self.node_types
+            })
+            selected = torch.cat([selected_by_type[node_type] for node_type in self.node_types], dim=0)
+
+        local_embedding = _masked_mean_pool(all_embeddings, all_batches, selected, graph_count)
+        if self.pooling_mode in {"touched_only", "touched_1hop"}:
+            return local_embedding
         repository_embedding = global_mean_pool(all_embeddings, all_batches, size=graph_count)
-        if bool(all_touched.any()):
-            touched_embedding = global_mean_pool(
-                all_embeddings[all_touched], all_batches[all_touched], size=graph_count
-            )
-        else:
-            touched_embedding = torch.zeros_like(repository_embedding)
-        return torch.cat([repository_embedding, touched_embedding], dim=1)
+        return torch.cat([repository_embedding, local_embedding], dim=1)
 
     def forward(self, data: Any) -> torch.Tensor:
         return self.classifier(self.encode(data)).squeeze(-1)
+
+
+def _masked_mean_pool(embeddings: torch.Tensor, batches: torch.Tensor, mask: torch.Tensor,
+                      graph_count: int) -> torch.Tensor:
+    """Pool selected nodes, returning a zero vector for graphs with no selected node."""
+    if bool(mask.any()):
+        return global_mean_pool(embeddings[mask], batches[mask], size=graph_count)
+    return embeddings.new_zeros((graph_count, embeddings.shape[1]))
+
+
+def _one_hop_masks(data: Any, touched: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+    """Select touched nodes and both endpoints one edge away from them.
+
+    Expansion always uses the original touched masks, so relation iteration order
+    cannot accidentally turn this into a two-or-more-hop neighbourhood.
+    """
+    selected = {node_type: mask.clone() for node_type, mask in touched.items()}
+    for (source_type, _, target_type), edge_index in data.edge_index_dict.items():
+        if edge_index.numel() == 0:
+            continue
+        sources, targets = edge_index[0], edge_index[1]
+        from_source = touched[source_type][sources]
+        from_target = touched[target_type][targets]
+        if bool(from_source.any()):
+            selected[target_type][targets[from_source]] = True
+        if bool(from_target.any()):
+            selected[source_type][sources[from_target]] = True
+    return selected
 
 
 def stratified_split(records: Sequence[dict[str, Any]], seed: int = 42,

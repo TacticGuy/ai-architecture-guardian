@@ -211,10 +211,18 @@ PR base/merge diff → diff.patch → future CodeBERT encoder
 ```
 
 The encoder uses two heterogeneous GraphSAGE message-passing layers by default.
-It mean-pools all node embeddings and separately pools the nodes defined in files
-touched by the PR. With `hidden_channels=32`, concatenating those pools produces
-a **64-dimensional vector per PR**. The auxiliary classifier maps that vector to
-one logit. The embedding exporter returns the vector before this classifier.
+V4 defaults to `touched_1hop` pooling: it pools only nodes in files touched by
+the PR plus their immediate graph neighbours. With `hidden_channels=32`, this
+produces a **32-dimensional vector per PR**. This replaces the V3 whole-repository
+plus touched-node concatenation, whose integrated-gradient audit showed that
+untouched repository state could dominate predictions. Old checkpoints remain
+loadable through the explicit `repo_plus_touched` compatibility mode.
+
+Training also reports deliberately weak shortcut baselines using merge date,
+repository size, touched-file statistics and repository identity. A GNN that
+does not beat these baselines has not demonstrated that it learned structural
+change risk. These features are evaluation controls; they are not supplied to
+the GNN.
 
 The existing input is the **before-PR graph**. Choosing candidate/head graphs or
 paired base/candidate graphs to represent the proposed architectural change is
@@ -243,7 +251,7 @@ the PR**, observed during the following six calendar months. It is an outcome
 proxy. A later file-overlapping refactor does not prove that the earlier PR
 caused architectural debt.
 
-Protocol v2 requires:
+Protocol v3 requires:
 
 1. A completed collection covering the sample's entire six-month future window.
 2. A reviewed architectural event tied to the exact merge SHA and production
@@ -257,10 +265,20 @@ Protocol v2 requires:
 
 PR titles and messages may help find review candidates. They cannot make a PR
 positive or negative. A review must explain the architectural change using the
-diff or structural evidence. The operational criteria for accepting those
-reviews still need to be established against actual historical PRs. Recording
-a rationale provides traceability; it does not independently prove the review
-is correct.
+integrated Git diff. A positive event must demonstrate a movement or
+consolidation of production responsibility, a module or dependency-direction
+redesign, an inheritance redesign, or a state-ownership redesign. Features,
+bug fixes, typing-only edits, releases, ordinary renames and packaging-path
+moves are not positive events. Recording a rationale provides traceability; it
+does not independently prove the review is correct.
+
+V4 review work is prioritized by how many currently unknown sample outcomes a
+diff can unlock. Priority never assigns a label and never uses a title as ground
+truth:
+
+```powershell
+python scripts/prepare_review_queue.py --label-audit data/statistics/v4/click_future_refactor_audit_v4.jsonl --history-audit data/statistics/v4/pallets__click_history_audit.jsonl --event-reviews data/labels/click_event_reviews.jsonl --output data/statistics/v4/click_review_queue_v4.jsonl
+```
 
 The original impact/semantic filtering scripts are useful for candidate discovery
 and statistics. Their output is not final risk ground truth. Small two-file
