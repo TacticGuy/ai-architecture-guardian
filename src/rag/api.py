@@ -106,6 +106,16 @@ class Chatbot:
         card = self.card("model:fusion")
         return card.text if card else ""
 
+    def model_metrics(self) -> dict[str, Any]:
+        """The fusion run's metrics.json (all four models, ranges, warnings), or {} if missing."""
+        path = self.root / "data/fusion" / str(self.version) / "metrics.json"
+        return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+
+    def dataset_summary(self) -> dict[str, Any]:
+        """Split sizes, risky counts, purged PRs and cutoffs (from the dataset card)."""
+        card = self.card("dataset")
+        return dict(card.meta) if card else {}
+
     def predictions(self) -> list[dict[str, str]]:
         path = self.root / "data/fusion" / str(self.version) / "predictions.csv"
         if not path.is_file():

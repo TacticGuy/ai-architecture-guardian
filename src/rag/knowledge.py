@@ -259,8 +259,11 @@ def dataset_card(inputs: dict[str, Any]) -> Card:
     if cutoffs:
         lines.append(f"Split cutoffs: train outcomes known by {cutoffs.get('train', '')[:10]}, "
                      f"validation by {cutoffs.get('validation', '')[:10]}; test PRs merged after the second cutoff.")
+    splits = {split: {"prs": sum(1 for row in rows if row["split"] == split),
+                      "risky": sum(row["label"] for row in rows if row["split"] == split)} for split in SPLITS}
     return Card(id="dataset", kind="dataset", title="Dataset and splits", text="\n".join(lines),
-                meta={"count": len(rows)})
+                meta={"count": len(rows), "repositories": repos, "splits": splits, "purged": list(inputs["purged"]),
+                      "cutoffs": cutoffs or {}})
 
 
 def doc_cards(docs_dir: Path) -> list[Card]:

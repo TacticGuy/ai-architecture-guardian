@@ -622,3 +622,27 @@ definition, the final graph-input contract, a diverse cohort, temporal baseline
 experiments, GNN/fusion training, score calibration and live-PR preparation.
 XAI, RAG, benchmark comparisons and dashboard integration follow the agreed
 encoder/label interface. No reliable final checkpoint has been trained yet.
+
+## Dashboard
+
+A Streamlit dashboard shows the fusion results, every PR's explanation and the
+chatbot in one page.
+
+```text
+pip install -r requirements.txt
+python scripts/build_kb.py --manifest artifacts/gnn_embeddings_v3.json
+streamlit run dashboard/app.py
+```
+
+Tabs: **Overview** (four models side by side with bootstrap ranges, warnings,
+every test PR's risk score against the threshold, dataset splits and purged PRs),
+**PR explorer** (score, true label, correct or wrong, and XAI layers A, B and C)
+and **Ask the chatbot** (grounded answers with their sources; needs `GROQ_API_KEY`
+in `.env`). Browsing works without a Groq key.
+
+Editing it: wording, colours and sizes are in the `SETTINGS` block at the top of
+`dashboard/app.py`; the light/dark theme is in `.streamlit/config.toml`. The
+dashboard reads data only through `src/rag/api.py` (`Chatbot`), never from the
+data folders directly, so changing the page cannot change the pipeline. The
+colour pairs were checked for colour-blind safety and contrast; keep each pair
+together. `tests/test_dashboard.py` runs the app headless on test data.
