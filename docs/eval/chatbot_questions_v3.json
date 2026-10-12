@@ -1,0 +1,269 @@
+{
+  "version": "v3",
+  "about": "Fixed questions for scripts/eval_chatbot.py. expect_cards: cards that must be retrieved. must_include: groups of phrases; each group is passed when ANY of its phrases appears in the answer (case-insensitive). refuse: the answer must say it does not have the information. follow_up_of: ask right after that question, in the same conversation. Expected facts come from the real v3 outputs; update them when the data changes.",
+  "questions": [
+    {
+      "id": "q01",
+      "topic": "single PR",
+      "question": "Why was PR #5648 flagged as risky?",
+      "expect_cards": [
+        "pr:pallets/flask#5648"
+      ],
+      "must_include": [
+        [
+          "1.000"
+        ],
+        [
+          "safe",
+          "label 0",
+          "label: 0"
+        ],
+        [
+          "wrong",
+          "incorrect",
+          "false positive",
+          "not correct"
+        ],
+        [
+          "9.12"
+        ]
+      ]
+    },
+    {
+      "id": "q02",
+      "topic": "single PR",
+      "question": "What was the risk score of PR #4997, and was the prediction correct?",
+      "expect_cards": [
+        "pr:pallets/flask#4997"
+      ],
+      "must_include": [
+        [
+          "0.769"
+        ],
+        [
+          "correct"
+        ]
+      ]
+    },
+    {
+      "id": "q03",
+      "topic": "follow-up",
+      "question": "Which diff hunks mattered most for it?",
+      "follow_up_of": "q02",
+      "expect_cards": [
+        "pr:pallets/flask#4997"
+      ],
+      "must_include": [
+        [
+          "blueprints.py"
+        ],
+        [
+          "207"
+        ],
+        [
+          "0.104"
+        ]
+      ]
+    },
+    {
+      "id": "q04",
+      "topic": "label evidence",
+      "question": "Which refactor PR made PR #4997 count as risky?",
+      "expect_cards": [
+        "pr:pallets/flask#4997"
+      ],
+      "must_include": [
+        [
+          "5127"
+        ]
+      ]
+    },
+    {
+      "id": "q05",
+      "topic": "model quality",
+      "question": "How good is the fusion model compared to the always-risky baseline?",
+      "expect_cards": [
+        "model:fusion"
+      ],
+      "must_include": [
+        [
+          "0.577"
+        ],
+        [
+          "0.600"
+        ],
+        [
+          "baseline"
+        ]
+      ]
+    },
+    {
+      "id": "q06",
+      "topic": "model quality",
+      "question": "What F1 did the GNN report for its own test result?",
+      "expect_cards": [
+        "model:fusion"
+      ],
+      "must_include": [
+        [
+          "0.783"
+        ]
+      ]
+    },
+    {
+      "id": "q07",
+      "topic": "predictions",
+      "question": "Which test PRs were false positives?",
+      "expect_cards": [
+        "predictions:test"
+      ],
+      "must_include": [
+        [
+          "5331"
+        ],
+        [
+          "5351"
+        ],
+        [
+          "5377"
+        ],
+        [
+          "5637"
+        ],
+        [
+          "5638"
+        ],
+        [
+          "5648"
+        ]
+      ]
+    },
+    {
+      "id": "q08",
+      "topic": "dataset",
+      "question": "How many PRs are in the dataset and how are they split?",
+      "expect_cards": [
+        "dataset"
+      ],
+      "must_include": [
+        [
+          "50"
+        ],
+        [
+          "15"
+        ],
+        [
+          "20"
+        ]
+      ]
+    },
+    {
+      "id": "q09",
+      "topic": "dataset",
+      "question": "How many PRs were purged, and why?",
+      "expect_cards": [
+        "dataset"
+      ],
+      "must_include": [
+        [
+          "12"
+        ],
+        [
+          "cutoff",
+          "window",
+          "leak"
+        ]
+      ]
+    },
+    {
+      "id": "q10",
+      "topic": "method",
+      "question": "What does label 1 mean?",
+      "expect_cards": [
+        "doc:labels#what-label-1-and-label-0-mean"
+      ],
+      "must_include": [
+        [
+          "six months",
+          "6 months",
+          "six calendar months"
+        ],
+        [
+          "refactor"
+        ]
+      ]
+    },
+    {
+      "id": "q11",
+      "topic": "method",
+      "question": "What is CodeReviewer and how is it used here?",
+      "expect_cards": [
+        "doc:models#codereviewer-diff-model"
+      ],
+      "must_include": [
+        [
+          "768"
+        ],
+        [
+          "diff"
+        ]
+      ]
+    },
+    {
+      "id": "q12",
+      "topic": "method",
+      "question": "What does XAI layer C show?",
+      "expect_cards": [
+        "doc:xai#layer-c-which-code-files-matter"
+      ],
+      "must_include": [
+        [
+          "integrated gradients"
+        ],
+        [
+          "file"
+        ]
+      ]
+    },
+    {
+      "id": "q13",
+      "topic": "limitations",
+      "question": "Why can files a PR did not touch affect its structure score?",
+      "expect_cards": [
+        "doc:limitations#whole-repository-signal-in-the-gnn"
+      ],
+      "must_include": [
+        [
+          "repository"
+        ],
+        [
+          "average",
+          "averages",
+          "pool",
+          "aggregat",
+          "all nodes",
+          "all the nodes"
+        ]
+      ]
+    },
+    {
+      "id": "q14",
+      "topic": "off-topic",
+      "question": "What is the capital of France?",
+      "refuse": true,
+      "expect_cards": [],
+      "must_include": []
+    },
+    {
+      "id": "q15",
+      "topic": "off-topic",
+      "question": "Who will win the next football world cup?",
+      "refuse": true,
+      "expect_cards": [],
+      "must_include": []
+    }
+  ],
+  "changes": [
+    "2026-10-12: after the first run, q01 lost the phrase 'even though' (it passed a fact by accident) and q13 also accepts 'aggregat'/'all nodes' (the answer stated the same fact in other words). The scorer now treats unusual spaces and dashes as normal ones."
+  ]
+}

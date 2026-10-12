@@ -100,7 +100,7 @@ def _print(answer: Answer, show_context: bool, bot: Chatbot) -> None:
     print(f"\nBot: {answer.text}")
     if answer.note:
         print(f"Note: {answer.note}")
-    print("Sources: " + ", ".join(f"{card['id']} ({card['reason']})" for card in answer.cards))
+    print("Sources: " + (", ".join(f"{card['id']} ({card['reason']})" for card in answer.cards) or "none"))
     if answer.unknown_citations:
         print(f"WARNING: cites cards it was not given: {', '.join(answer.unknown_citations)}")
     if answer.unsupported_numbers:

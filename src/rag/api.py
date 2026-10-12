@@ -68,11 +68,16 @@ class Chatbot:
         answer = check_answer(question, text, hits, getattr(self.llm, "last_used", getattr(self.llm, "name", "")),
                               getattr(self.llm, "note", ""))
         if remember:
-            self.history.append((question, text))
-            self.history = self.history[-4:]
-            pinned = [hit.card.meta.get("pr_number") for hit in hits if hit.reason == "pr-number"]
-            self._context_prs = [number for number in pinned if isinstance(number, int)] or self._context_prs
+            self.remember(answer)
         return answer
+
+    def remember(self, answer: Answer) -> None:
+        """Add an answer to the conversation, so a follow-up question can refer back to it."""
+        self.history.append((answer.question, answer.text))
+        self.history = self.history[-4:]
+        pinned = [card["id"] for card in answer.cards if card.get("reason") == "pr-number"]
+        numbers = [self.card(card_id).meta.get("pr_number") for card_id in pinned if self.card(card_id)]
+        self._context_prs = [number for number in numbers if isinstance(number, int)] or self._context_prs
 
     def reset(self) -> None:
         self.history, self._context_prs = [], []

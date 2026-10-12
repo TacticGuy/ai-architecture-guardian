@@ -113,6 +113,8 @@ def test_unexplained_and_safe_pr_cards_say_so(tmp_path):
     cards = cards_of(make_project(tmp_path))
     assert "has not been explained yet" in cards["pr:o/r#11"].text
     assert "True label: 0 (safe)" in cards["pr:o/r#32"].text
+    assert cards["pr:o/r#32"].text.splitlines()[1] == ("Summary: true label 0 (safe); fusion predicted risky with "
+                                                      "risk score 0.600, which is WRONG.")
     assert "predicted risky, which is wrong" in cards["pr:o/r#32"].text          # 0.6 >= 0.5 but label 0
 
 

@@ -126,7 +126,10 @@ def pr_card(inputs: dict[str, Any], sample_id: str) -> Card:
     probability = float(prediction["p_fusion"])
     predicted = probability >= threshold
     correct = int(predicted) == row["label"]
-    lines = [f"PR {sample_id} ({row['split']} split{', merged ' + meta['merged_at'][:10] if meta.get('merged_at') else ''})."]
+    lines = [f"PR {sample_id} ({row['split']} split{', merged ' + meta['merged_at'][:10] if meta.get('merged_at') else ''}).",
+             f"Summary: true label {row['label']} ({'risky' if row['label'] else 'safe'}); fusion predicted "
+             f"{'risky' if predicted else 'not risky'} with risk score {fmt(probability)}, which is "
+             f"{'CORRECT' if correct else 'WRONG'}."]
     if row["label"] == 1:
         evidence = meta.get("event_evidence") or {}
         trigger = meta.get("triggering_refactor_pr")

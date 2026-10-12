@@ -325,3 +325,9 @@ def test_live_groq_answer_is_grounded():
     bot = Chatbot.from_version("v3")
     answer = bot.ask("What was the fusion risk score of PR #5648, and was the prediction correct?")
     assert "pr:pallets/flask#5648" in answer.citations and not answer.unknown_citations
+
+
+def test_chat_script_says_none_when_no_card_was_used(tmp_path, capsys):
+    assert run_chat(tmp_path, "-q", "What is the capital of France?",
+                    reply="I don't have that in the project outputs.") == 0
+    assert "Sources: none" in capsys.readouterr().out
