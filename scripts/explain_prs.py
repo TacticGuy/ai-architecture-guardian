@@ -8,13 +8,18 @@ Needs the outputs of build_diff_embeddings.py and train_fusion.py for the same m
 loads the same CodeReviewer model (already downloaded on the machine that built the vectors).
 
 Writes data/xai/<version>/:
-  <repo>__<name>__<number>.json   per PR: score, structure-vs-diff split, hunks ranked by effect
+  <repo>__<name>__<number>.json   per PR: score, structure-vs-diff split (A), hunks ranked by
+                                  effect (B), code files ranked by effect on the structure part (C)
   summary.csv                     one line per PR
+
+Layer C uses the GNN checkpoint named in the manifest (artifacts/gnn_future_risk_<version>.pt)
+and each PR's before/graph.pt. Skip it with --no-graph.
 
 Safety checks (the run stops instead of explaining the wrong thing):
   * the fusion model must have been trained on exactly these input files (sha256 match);
   * the encoder settings must equal the ones stored with the CodeReviewer vectors;
-  * re-encoding each full diff must reproduce its saved vector.
+  * re-encoding each full diff must reproduce its saved vector;
+  * the GNN checkpoint must reproduce each PR's saved GNN vector from its graph.
 """
 from __future__ import annotations
 
@@ -33,9 +38,11 @@ import torch  # noqa: E402
 
 from src.fusion.data import AlignmentError, load_aligned, manifest_version  # noqa: E402
 from src.fusion.model import FusionModel  # noqa: E402
+from src.ml.gnn_inference import load_gnn_checkpoint, load_gnn_model, prepare_graph  # noqa: E402
 from src.semantic.diff_encoder import DiffEncoder, EncoderSettings  # noqa: E402
 from src.utils.config import load_settings  # noqa: E402
 from src.xai.explain import ExplanationError, explain_pr  # noqa: E402
+from src.xai.graph import explain_graph  # noqa: E402
 
 SCHEMA_VERSION = 1
 EncoderFactory = Callable[[str, EncoderSettings, str], DiffEncoder]
@@ -54,11 +61,16 @@ def main(argv: list[str] | None = None, encoder_factory: EncoderFactory | None =
     parser.add_argument("--fusion-model", type=Path, help="Default: data/fusion/<version>/fusion_model.pt")
     parser.add_argument("--samples-dir", type=Path, help="Default: data/future_pr_samples_<version>")
     parser.add_argument("--output-dir", type=Path, help="Default: data/xai/<version>")
+    parser.add_argument("--gnn-checkpoint", type=Path,
+                        help="Default: the checkpoint named in the manifest, next to it (layer C)")
+    parser.add_argument("--no-graph", action="store_true", help="Skip layer C (which code files matter)")
+    parser.add_argument("--graph-steps", type=int, default=64, help="Integrated Gradients steps (layer C)")
+    parser.add_argument("--top-files", type=int, default=10, help="Files listed per PR (layer C)")
     parser.add_argument("--batch-size", type=int, default=EncoderSettings.batch_size)
     parser.add_argument("--device", default="cpu", help="cpu (default), cuda, or auto")
     args = parser.parse_args(argv)
-    if args.max_hunks < 1:
-        parser.error("--max-hunks must be >= 1")
+    if args.max_hunks < 1 or args.graph_steps < 1 or args.top_files < 1:
+        parser.error("--max-hunks, --graph-steps and --top-files must be >= 1")
 
     version = manifest_version(args.manifest)
     if version is None and not (args.samples_dir and args.fusion_model and args.output_dir):
@@ -70,9 +82,13 @@ def main(argv: list[str] | None = None, encoder_factory: EncoderFactory | None =
     fusion_path = args.fusion_model or ROOT / "data/fusion" / str(version) / "fusion_model.pt"
     samples_dir = args.samples_dir or ROOT / "data" / f"future_pr_samples_{version}"
     output_dir = args.output_dir or ROOT / "data/xai" / str(version)
+    checkpoint_path = None if args.no_graph else (args.gnn_checkpoint or _default_checkpoint_path(args.manifest))
     for name, path, hint in (("manifest", args.manifest, ""), ("GNN embeddings", gnn_path, ""),
                              ("CodeReviewer embeddings", diff_path, " Run scripts/build_diff_embeddings.py first."),
-                             ("fusion model", fusion_path, " Run scripts/train_fusion.py first.")):
+                             ("fusion model", fusion_path, " Run scripts/train_fusion.py first."),
+                             *((("GNN checkpoint", checkpoint_path,
+                                 " Copy the teammate's checkpoint there, or skip layer C with --no-graph."),)
+                               if checkpoint_path else ())):
         if not path.is_file():
             print(f"Missing {name}: {path}.{hint}")
             return 2
@@ -95,11 +111,19 @@ def main(argv: list[str] | None = None, encoder_factory: EncoderFactory | None =
     if isinstance(selected, str):
         print(selected)
         return 2
-    diff_paths = _diff_paths(samples_dir)
+    diff_paths, graph_paths = _sample_paths(samples_dir)
     missing = [sample_id for sample_id in selected if sample_id not in diff_paths]
     if missing:
         print(f"No diff.patch under {samples_dir} for: {', '.join(missing)}")
         return 2
+    if checkpoint_path:
+        missing = [sample_id for sample_id in selected if sample_id not in graph_paths]
+        if missing:
+            print(f"No before/graph.pt under {samples_dir} for: {', '.join(missing)} (or use --no-graph)")
+            return 2
+        checkpoint = load_gnn_checkpoint(checkpoint_path)
+        gnn = load_gnn_model(checkpoint, "cpu")
+        print(f"Layer C: GNN checkpoint {checkpoint_path.name}")
 
     store = torch.load(diff_path, weights_only=True)
     stored_settings = store["encoder"]
@@ -126,6 +150,11 @@ def main(argv: list[str] | None = None, encoder_factory: EncoderFactory | None =
             result = explain_pr(model=model, encoder=encoder, analysis_settings=analysis_settings,
                                 diff_text=diff_paths[sample_id].read_text(encoding="utf-8", errors="replace"),
                                 gnn=data.gnn[row], stored_diff=data.diff[row], max_hunks=args.max_hunks)
+            if checkpoint_path:
+                result["graph"] = explain_graph(
+                    gnn=gnn, graph=prepare_graph(graph_paths[sample_id], checkpoint), fusion=model,
+                    diff=data.diff[row], stored_gnn=data.gnn[row], feature_names=list(checkpoint["feature_names"]),
+                    steps=args.graph_steps, top_files=args.top_files)
         except (ExplanationError, ValueError, OSError) as exc:
             failures.append(f"{sample_id}: {exc}")
             print(f"[{number}/{len(selected)}] FAILED {sample_id}: {exc}")
@@ -141,9 +170,12 @@ def main(argv: list[str] | None = None, encoder_factory: EncoderFactory | None =
         top = result["hunks"][0] if result["hunks"] else None
         where = f"{top['file']}:{top['new_lines'][0]}-{top['new_lines'][1]} ({top['effect_on_risk']:+.3f})" if top else "-"
         parts = result["contributions"]
+        graph = result.get("graph")
+        top_file = (f" | top file {graph['files'][0]['file']} ({graph['files'][0]['attribution']:+.2f})"
+                    if graph and graph["files"] else "")
         print(f"[{number}/{len(selected)}] {sample_id} risk={result['probability']:.3f} "
               f"structure={parts['structure_gnn']:+.2f} diff={parts['diff_codereviewer']:+.2f} "
-              f"top hunk {where} ({time.perf_counter() - started:.0f}s)")
+              f"top hunk {where}{top_file} ({time.perf_counter() - started:.0f}s)")
 
     if summary:
         _write_summary(output_dir / "summary.csv", summary)
@@ -161,14 +193,32 @@ def _select(data, split: str, wanted: list[str]) -> list[str] | str:
     return [sample_id for sample_id, value in zip(data.sample_ids, data.splits) if split in ("all", value)]
 
 
-def _diff_paths(samples_dir: Path) -> dict[str, Path]:
-    paths: dict[str, Path] = {}
+def _sample_paths(samples_dir: Path) -> tuple[dict[str, Path], dict[str, Path]]:
+    diffs: dict[str, Path] = {}
+    graphs: dict[str, Path] = {}
     for metadata_path in sorted(samples_dir.glob("*/*/metadata.json")):
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        sample_id = metadata.get("sample_id")
+        if not isinstance(sample_id, str):
+            continue
         diff_path = metadata_path.parent / metadata.get("diff_path", "diff.patch")
-        if isinstance(metadata.get("sample_id"), str) and diff_path.is_file():
-            paths[metadata["sample_id"]] = diff_path
-    return paths
+        if diff_path.is_file():
+            diffs[sample_id] = diff_path
+        graph = metadata.get("before_graph_path")
+        if isinstance(graph, str) and (metadata_path.parent / graph).is_file():
+            graphs[sample_id] = metadata_path.parent / graph
+    return diffs, graphs
+
+
+def _default_checkpoint_path(manifest_path: Path) -> Path:
+    try:
+        named = json.loads(manifest_path.read_text(encoding="utf-8")).get("checkpoint_name")
+    except (OSError, json.JSONDecodeError):
+        named = None
+    if not isinstance(named, str) or not named:
+        version = manifest_version(manifest_path)
+        named = f"gnn_future_risk_{version}.pt"
+    return manifest_path.parent / named
 
 
 def _default_gnn_path(manifest_path: Path) -> Path:
@@ -191,7 +241,20 @@ def _summary_row(report: dict[str, Any]) -> dict[str, Any]:
             "base_logit": f"{parts['base_logit']:.4f}", "top_hunk_file": top.get("file", ""),
             "top_hunk_lines": "-".join(str(value) for value in top.get("new_lines", [])),
             "top_hunk_effect": f"{top['effect_on_risk']:.6f}" if top else "",
-            "hunks_explained": report["hunk_counts"]["explained"]}
+            "hunks_explained": report["hunk_counts"]["explained"],
+            **_graph_summary(report.get("graph"))}
+
+
+def _graph_summary(graph: dict[str, Any] | None) -> dict[str, str]:
+    if not graph:
+        return {"gnn_probability": "", "top_file": "", "top_file_effect": "", "top_file_touched": "",
+                "touched_files_total": "", "untouched_files_total": ""}
+    top = graph["files"][0] if graph["files"] else {}
+    return {"gnn_probability": f"{graph['gnn_probability']:.6f}", "top_file": top.get("file", ""),
+            "top_file_effect": f"{top['attribution']:.4f}" if top else "",
+            "top_file_touched": int(top.get("touched", False)) if top else "",
+            "touched_files_total": f"{graph['touched_files_total']:.4f}",
+            "untouched_files_total": f"{graph['untouched_files_total']:.4f}"}
 
 
 def _write_summary(path: Path, rows: list[dict[str, Any]]) -> None:

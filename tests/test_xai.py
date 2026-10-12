@@ -186,7 +186,8 @@ def build_pipeline(tmp_path: Path) -> dict[str, Path]:
 def explain_script(paths: dict[str, Path], *extra: str) -> int:
     return load("explain_prs").main(["--manifest", str(paths["manifest"]), "--diff", str(paths["diff"]),
                                      "--fusion-model", str(paths["fusion"]), "--samples-dir", str(paths["samples"]),
-                                     "--output-dir", str(paths["xai"]), *extra], encoder_factory=fake_factory)
+                                     "--output-dir", str(paths["xai"]), "--no-graph", *extra],
+                                    encoder_factory=fake_factory)
 
 
 def test_script_explains_the_test_prs_and_writes_a_summary(tmp_path, capsys):
