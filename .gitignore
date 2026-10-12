@@ -21,3 +21,4 @@ data/future_pr_samples/
 models/*.pt
 data/embeddings/
 data/future_pr_samples_v3/
+data/fusion/
