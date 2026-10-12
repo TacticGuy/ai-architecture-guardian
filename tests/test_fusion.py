@@ -180,7 +180,7 @@ def test_always_risky_baseline_scores_like_chance():
     metrics = score(labels, [1.0] * 5, 0.5, constant=True)
     assert metrics["recall"] == 1.0 and metrics["precision"] == 0.6
     assert metrics["pr_auc_average_precision"] == 0.6          # share of risky PRs, not a lucky tie-break
-    assert binary_metrics(labels, [1.0] * 5)["pr_auc_average_precision"] == 1.0   # why the fix is needed
+    assert binary_metrics(labels, [1.0] * 5)["pr_auc_average_precision"] == 0.6   # the GNN's metric agrees
 
 
 def test_bootstrap_range_is_reproducible_and_contains_the_score():
