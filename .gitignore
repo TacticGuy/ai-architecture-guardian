@@ -27,3 +27,4 @@ data/statistics/*.txt
 data/embeddings/
 data/fusion/
 data/xai/
+data/kb/
