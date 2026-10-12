@@ -17,9 +17,13 @@ data/analysis/*
 data/pyg/*
 !data/pyg/.gitkeep
 data/pr_samples/
-data/future_pr_samples/
+data/future_pr_samples*/
 models/*.pt
+artifacts/*.pt
+artifacts/*.json
+!artifacts/.gitkeep
+data/statistics/*.txt
+!data/labels/*_event_reviews.jsonl
 data/embeddings/
-data/future_pr_samples_v3/
 data/fusion/
 data/xai/

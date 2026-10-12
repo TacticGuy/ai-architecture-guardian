@@ -17,9 +17,9 @@ from src.utils.config import load_settings
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Build leakage-safe future-risk GNN samples.")
-    parser.add_argument("--labels", type=Path, default=ROOT / "data/labels/future_refactor_labels.jsonl")
+    parser.add_argument("--labels", type=Path, default=ROOT / "data/labels/future_refactor_labels_v3.jsonl")
     parser.add_argument("--repository-root", type=Path, default=ROOT / "data/repositories")
-    parser.add_argument("--output-dir", type=Path, default=ROOT / "data/future_pr_samples")
+    parser.add_argument("--output-dir", type=Path, default=ROOT / "data/future_pr_samples_v3")
     parser.add_argument("--repo", help="Limit to one repository")
     parser.add_argument("--max-positive", type=int, help="Maximum positive samples to build")
     parser.add_argument("--max-negative", type=int, help="Maximum negative samples to build")
@@ -32,6 +32,11 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     records = list(iter_jsonl(args.labels))
+    invalid = [record.get("sample_id") for record in records
+               if record.get("label_protocol_version") != 3]
+    if invalid:
+        print(f"Build blocked: {len(invalid)} labels are not protocol v3. No graphs built.")
+        return 2
     if args.repo:
         records = [record for record in records if record.get("repo") == args.repo]
     records.sort(key=lambda record: (record.get("merged_at") or "", record.get("sample_id") or ""))
@@ -48,6 +53,21 @@ def main(argv: list[str] | None = None) -> int:
         number = record.get("pr_number")
         sample_dir = args.output_dir / str(repo).replace("/", "__") / str(number)
         if (sample_dir / "metadata.json").is_file():
+            existing = json.loads((sample_dir / "metadata.json").read_text(encoding="utf-8"))
+            audit_fields = (
+                "label", "merge_commit_sha", "label_protocol_version", "horizon_end",
+                "observation_start", "observation_end", "triggering_refactor_pr", "event_evidence",
+                "history_evidence", "head_ref_sha", "commit_count", "changed_python_files",
+            )
+            if any(existing.get(field) != record.get(field) for field in audit_fields):
+                failed += 1
+                print(f"Stale sample: {record.get('sample_id')}; use a new --output-dir after relabelling")
+                continue
+            graph_path = sample_dir / existing.get("before_graph_path", "")
+            if not graph_path.is_file():
+                failed += 1
+                print(f"Incomplete sample: {record.get('sample_id')}; missing graph, use a new --output-dir")
+                continue
             skipped += 1
             selected[label] += 1
             continue

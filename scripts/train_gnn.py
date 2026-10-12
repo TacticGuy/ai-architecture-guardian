@@ -16,29 +16,75 @@ from torch_geometric.loader import DataLoader
 
 from src.ml.hetero_data import TENSOR_FEATURE_NAMES, load_hetero_data
 from src.ml.hetero_gnn import HeteroRiskGNN, binary_metrics, stratified_split
+from src.ml.gnn_data import discover_samples, temporal_split
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Train a heterogeneous GNN future-risk classifier.")
-    parser.add_argument("--data-dir", type=Path, default=ROOT / "data/future_pr_samples")
-    parser.add_argument("--output", type=Path, default=ROOT / "models/gnn_future_risk.pt")
-    parser.add_argument("--metrics", type=Path, default=ROOT / "data/statistics/gnn_metrics.json")
+    parser.add_argument("--data-dir", type=Path, default=ROOT / "data/future_pr_samples_v3")
+    parser.add_argument("--output", type=Path, default=ROOT / "models/gnn_future_risk_v3.pt")
+    parser.add_argument("--metrics", type=Path, default=ROOT / "data/statistics/gnn_metrics_v3.json")
     parser.add_argument("--epochs", type=int, default=30)
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--hidden-channels", type=int, default=32)
     parser.add_argument("--learning-rate", type=float, default=0.001)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--train-cutoff", help="UTC timestamp when training outcomes must be known")
+    parser.add_argument("--validation-cutoff", help="UTC timestamp when validation outcomes must be known")
+    parser.add_argument(
+        "--allow-smoke", action="store_true",
+        help="Explicitly allow legacy unverified labels for software smoke tests only",
+    )
     args = parser.parse_args(argv)
     if args.epochs <= 0 or args.batch_size <= 0:
         parser.error("epochs and batch size must be positive")
 
     random.seed(args.seed)
     torch.manual_seed(args.seed)
-    records = _discover(args.data_dir)
+    try:
+        records = _discover(args.data_dir)
+    except (OSError, ValueError) as error:
+        print(f"Training blocked: {error}")
+        return 2
+    legacy = [record for record in records if record.get("label_protocol_version") != 3]
+    if legacy and not args.allow_smoke:
+        print(
+            f"Training blocked: {len(legacy)} samples lack label protocol v3 history evidence. "
+            "Build reviewed labels with verified collection coverage first. "
+            "--allow-smoke is only for reproducing development runs."
+        )
+        return 2
     if len(records) < 10 or len({record["label"] for record in records}) < 2:
         print("Need at least 10 built graphs containing both labels.")
         return 2
-    train_records, validation_records, test_records = stratified_split(records, args.seed)
+    if args.allow_smoke:
+        if args.train_cutoff or args.validation_cutoff:
+            parser.error("Smoke mode uses its development split; omit temporal cutoffs")
+        train_records, validation_records, test_records = stratified_split(records, args.seed)
+        split_name = "stratified_smoke"
+        purged_records = []
+        purged_count = 0
+    else:
+        if not args.train_cutoff or not args.validation_cutoff:
+            print("Training blocked: supply --train-cutoff and --validation-cutoff after inspecting cohort dates.")
+            return 2
+        try:
+            splits = temporal_split(records, args.train_cutoff, args.validation_cutoff)
+        except ValueError as error:
+            print(f"Training blocked: {error}")
+            return 2
+        train_records, validation_records, test_records = (
+            splits[name] for name in ("train", "validation", "test")
+        )
+        purged_records = splits["purged"]
+        split_name = "temporal_purged"
+        purged_count = len(splits["purged"])
+    for name, split_records in (
+        ("train", train_records), ("validation", validation_records), ("test", test_records)
+    ):
+        if {record["label"] for record in split_records} != {0, 1}:
+            print(f"Training blocked: {name} needs both outcome classes; collect more verified history.")
+            return 2
     train_graphs = [_load(record) for record in train_records]
     validation_graphs = [_load(record) for record in validation_records]
     test_graphs = [_load(record) for record in test_records]
@@ -90,14 +136,17 @@ def main(argv: list[str] | None = None) -> int:
     _, test_labels, test_probabilities = _evaluate(model, test_loader, criterion, device)
     threshold = _best_f1_threshold(validation_labels, validation_probabilities)
     results = {
-        "status": "smoke_evaluation_not_final",
-        "split": "stratified",
+        "status": "smoke_evaluation_not_final" if args.allow_smoke else "temporal_evaluation",
+        "split": split_name,
+        "purged_count": purged_count,
+        "score_type": "uncalibrated_sigmoid",
+        "cutoffs": {"train": args.train_cutoff, "validation": args.validation_cutoff},
         "device": str(device),
         "seed": args.seed,
         "train_count": len(train_graphs),
         "validation": binary_metrics(validation_labels, validation_probabilities, threshold),
         "test": binary_metrics(test_labels, test_probabilities, threshold),
-        "warning": "Use a broader time-based split before reporting final research results.",
+        "warning": "Compare baselines and inspect test uncertainty before claiming predictive value.",
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     torch.save({
@@ -108,6 +157,13 @@ def main(argv: list[str] | None = None) -> int:
         "feature_std": std.cpu(),
         "hidden_channels": args.hidden_channels,
         "threshold": threshold,
+        "seed": args.seed,
+        "split_sample_ids": {
+            "train": [record["sample_id"] for record in train_records],
+            "validation": [record["sample_id"] for record in validation_records],
+            "test": [record["sample_id"] for record in test_records],
+            "purged": [record["sample_id"] for record in purged_records],
+        },
         "results": results,
     }, args.output)
     args.metrics.parent.mkdir(parents=True, exist_ok=True)
@@ -118,17 +174,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _discover(root: Path) -> list[dict]:
-    records = []
-    for path in root.glob("*/*/metadata.json"):
-        try:
-            record = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
-        graph_path = path.parent / record.get("before_graph_path", "")
-        if record.get("label") in (0, 1) and graph_path.is_file():
-            record["_metadata_path"] = str(path)
-            records.append(record)
-    return records
+    return discover_samples(root)
 
 
 def _load(record: dict):
@@ -169,8 +215,13 @@ def _evaluate(model, loader, criterion, device):
 
 
 def _best_f1_threshold(labels: list[int], probabilities: list[float]) -> float:
+    if not probabilities:
+        raise ValueError("Threshold selection requires validation predictions")
     candidates = sorted(set([0.5] + probabilities))
-    return max(candidates, key=lambda threshold: binary_metrics(labels, probabilities, threshold)["f1"])
+    def score(threshold):
+        metrics = binary_metrics(labels, probabilities, threshold)
+        return metrics["f1"], metrics["precision"], threshold
+    return max(candidates, key=score)
 
 
 if __name__ == "__main__":
