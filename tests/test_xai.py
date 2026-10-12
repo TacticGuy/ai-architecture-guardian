@@ -87,6 +87,12 @@ def test_structure_and_diff_parts_add_up_to_the_score():
 
 # --- layer B -------------------------------------------------------------------------------------
 
+def test_probability_works_for_huge_logits():
+    from src.xai.explain import _sigmoid
+    assert _sigmoid(-12818.8) == 0.0 and _sigmoid(12818.8) == 1.0
+    assert _sigmoid(0.0) == 0.5 and abs(_sigmoid(-2.0) - 1 / (1 + math.exp(2.0))) < 1e-15
+
+
 def danger_setup():
     encoder = fake_encoder()
     danger = encoder.model.embedding.weight[FakeTokenizer()("<add>DANGER", add_special_tokens=False)["input_ids"][0]]

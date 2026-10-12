@@ -62,7 +62,11 @@ def _logit(model: FusionModel, features: torch.Tensor) -> float:
 
 
 def _sigmoid(value: float) -> float:
-    return 1.0 / (1.0 + math.exp(-value))
+    """Risk probability from a logit; written so very large logits (either sign) cannot overflow."""
+    if value >= 0:
+        return 1.0 / (1.0 + math.exp(-value))
+    small = math.exp(value)
+    return small / (1.0 + small)
 
 
 # --- layer B ---------------------------------------------------------------------------------
