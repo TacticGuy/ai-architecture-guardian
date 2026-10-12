@@ -105,6 +105,8 @@ def test_explained_pr_card_carries_label_evidence_scores_and_all_three_layers(tm
     assert "structure from the GNN -0.28, diff from CodeReviewer +0.34" in text
     assert "src/pkg/a.py lines 207-218 (effect +0.104; +6/-13 lines)" in text
     assert "src/pkg/cli.py +1.46 (not touched)" in text and "untouched files total +5.42" in text
+    assert "In words: files this PR did NOT touch moved the structure score more than the files it touched " \
+           "(+5.42 vs +3.56)" in text
 
 
 def test_unexplained_and_safe_pr_cards_say_so(tmp_path):

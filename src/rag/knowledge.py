@@ -168,8 +168,16 @@ def pr_card(inputs: dict[str, Any], sample_id: str) -> Card:
             files = [f"{row['file']} {signed(row['attribution'])} ({'touched' if row['touched'] else 'not touched'})"
                      for row in graph["files"][:5]]
             lines.append("Layer C, code files with the largest effect on the structure score: " + "; ".join(files) + ".")
-            lines.append(f"Touched files total {signed(graph['touched_files_total'])}, untouched files total "
-                         f"{signed(graph['untouched_files_total'])}. GNN's own risk score {fmt(graph['gnn_probability'])}.")
+            touched, untouched = graph["touched_files_total"], graph["untouched_files_total"]
+            lines.append(f"Touched files total {signed(touched)}, untouched files total {signed(untouched)}. "
+                         f"GNN's own risk score {fmt(graph['gnn_probability'])}.")
+            if abs(untouched) > abs(touched):
+                lines.append(f"In words: files this PR did NOT touch moved the structure score more than the files it "
+                             f"touched ({signed(untouched)} vs {signed(touched)}), so the structure part reflects the "
+                             "rest of the repository more than this change.")
+            else:
+                lines.append(f"In words: the files this PR touched moved the structure score more than the files it did "
+                             f"not touch ({signed(touched)} vs {signed(untouched)}).")
     return Card(id=f"pr:{sample_id}", kind="pr", title=f"PR {sample_id}", text="\n".join(lines),
                 meta={"sample_id": sample_id, "pr_number": _pr_order(sample_id)[1], "split": row["split"],
                       "label": row["label"], "probability": probability, "predicted_risky": predicted,
