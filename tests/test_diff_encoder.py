@@ -362,3 +362,36 @@ def test_verify_catches_wrong_split_counts_and_labels():
         script.verify_against_manifest({**store, "sample_ids": ["org/r#12", "org/r#12", "org/r#11", "org/r#13"]}, manifest)
     with pytest.raises(script.ManifestError, match="NaN"):
         script.verify_against_manifest({**store, "embeddings": torch.full((4, 16), float("nan"))}, manifest)
+
+
+# --- data version comes from the manifest name -------------------------------------------
+
+def test_samples_folder_follows_the_manifest_version(tmp_path):
+    script = load_script()
+    assert script.manifest_version(Path("artifacts/gnn_embeddings_v3.json")) == "v3"
+    assert script.manifest_version(Path("artifacts/gnn_embeddings_v12.json")) == "v12"
+    assert script.manifest_version(Path("artifacts/gnn_embeddings.json")) is None
+    assert script.manifest_version(Path("artifacts/gnn_v3_embeddings.json")) is None     # version must be at the end
+    assert script.default_samples_dir(Path("a/gnn_embeddings_v4.json"), tmp_path) == tmp_path / "data/future_pr_samples_v4"
+    assert script.default_samples_dir(None, tmp_path) == tmp_path / "data/future_pr_samples"
+
+
+def test_new_manifest_version_reads_its_own_folder_by_default(tmp_path, capsys):
+    script = load_script()
+    manifest = write_manifest(tmp_path / "gnn_embeddings_v987.json")
+    code = script.main(["--manifest", str(manifest), "--output-dir", str(tmp_path / "out"), "--model", "fake/model"],
+                       encoder_factory=fake_factory)
+    assert code == 2                                                                  # that folder does not exist
+    printed = capsys.readouterr().out
+    assert "No samples" in printed and str(Path("data") / "future_pr_samples_v987") in printed
+    assert not (tmp_path / "out").exists()
+
+
+def test_manifest_without_a_version_needs_samples_dir(tmp_path, capsys):
+    script, samples = load_script(), tmp_path / "samples"
+    make_samples(samples, MANIFEST_SPECS)
+    manifest = write_manifest(tmp_path / "gnn_embeddings.json")
+    with pytest.raises(SystemExit):
+        script.main(["--manifest", str(manifest), "--model", "fake/model"], encoder_factory=fake_factory)
+    assert "Pass --samples-dir" in capsys.readouterr().err
+    assert run_manifest(script, samples, tmp_path / "out", manifest) == 0              # explicit folder still works

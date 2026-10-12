@@ -22,6 +22,7 @@ from collections import Counter
 import csv
 import hashlib
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any, Callable
@@ -47,7 +48,8 @@ def main(argv: list[str] | None = None, encoder_factory: EncoderFactory | None =
     parser.add_argument("--manifest", type=Path,
                         help="GNN embedding manifest (e.g. artifacts/gnn_embeddings_v3.json): encode exactly its samples")
     parser.add_argument("--samples-dir", type=Path,
-                        help="Default: data/future_pr_samples_v3 with --manifest, else data/future_pr_samples")
+                        help="Default: data/future_pr_samples_<version> with --manifest (version from the manifest "
+                             "name, e.g. gnn_embeddings_v4.json -> v4), else data/future_pr_samples")
     parser.add_argument("--output-dir", type=Path, help="Default: data/embeddings/<model>[__<manifest name>]")
     parser.add_argument("--model", default=DEFAULT_MODEL, help=f"Hugging Face model (default {DEFAULT_MODEL})")
     parser.add_argument("--limit", type=int, help="Encode at most this many new/changed samples (trial runs)")
@@ -62,11 +64,14 @@ def main(argv: list[str] | None = None, encoder_factory: EncoderFactory | None =
         parser.error("--limit must be positive")
     if args.manifest and args.sample_id:
         parser.error("--sample-id cannot be combined with --manifest (the manifest decides the samples)")
+    if args.manifest and not args.samples_dir and manifest_version(args.manifest) is None:
+        parser.error(f"cannot tell the data version from '{args.manifest.name}' (expected a name ending in _v<number>, "
+                     "e.g. gnn_embeddings_v4.json). Pass --samples-dir.")
 
     settings = EncoderSettings(max_chunks=args.max_chunks, batch_size=args.batch_size,
                                graph_files_only=not args.keep_test_files)
     analysis_settings = load_settings(ROOT / "config/settings.json")["static_analysis"]
-    samples_dir = args.samples_dir or ROOT / ("data/future_pr_samples_v3" if args.manifest else "data/future_pr_samples")
+    samples_dir = args.samples_dir or default_samples_dir(args.manifest, ROOT)
     model_slug = args.model.replace("/", "__").replace("\\", "__")
     if args.output_dir:
         output_dir = args.output_dir
@@ -76,8 +81,12 @@ def main(argv: list[str] | None = None, encoder_factory: EncoderFactory | None =
         output_dir = ROOT / "data/embeddings" / model_slug
     store_path, index_path = output_dir / "embeddings.pt", output_dir / "index.csv"
 
+    print(f"Samples folder: {samples_dir}")
     try:
         samples = discover_samples(samples_dir)
+        if not samples:
+            print(f"No samples with metadata.json + diff.patch found under {samples_dir}")
+            return 2
         manifest = None
         if args.manifest:
             manifest = load_manifest(args.manifest)
@@ -89,9 +98,6 @@ def main(argv: list[str] | None = None, encoder_factory: EncoderFactory | None =
             samples = select_ids(samples, args.sample_id)
     except (ManifestError, ValueError) as exc:
         print(f"Dataset problem: {exc}")
-        return 2
-    if not samples:
-        print(f"No samples with metadata.json + diff.patch found under {samples_dir}")
         return 2
 
     store = load_store(store_path)
@@ -170,6 +176,22 @@ def main(argv: list[str] | None = None, encoder_factory: EncoderFactory | None =
 
 
 # --- samples and manifest --------------------------------------------------------------------
+
+def manifest_version(manifest_path: Path) -> str | None:
+    """'gnn_embeddings_v4.json' -> 'v4'; None when the name carries no version."""
+    match = re.search(r"_(v\d+)$", manifest_path.stem)
+    return match.group(1) if match else None
+
+
+def default_samples_dir(manifest_path: Path | None, root: Path) -> Path:
+    """Where the diffs live by default: the folder of the same data version as the manifest."""
+    if manifest_path is None:
+        return root / "data/future_pr_samples"
+    version = manifest_version(manifest_path)
+    if version is None:
+        raise ValueError(f"no version in manifest name {manifest_path.name}")
+    return root / "data" / f"future_pr_samples_{version}"
+
 
 def discover_samples(samples_dir: Path) -> list[dict[str, Any]]:
     """Read every ``*/*/metadata.json`` that has a diff and a 0/1 label, sorted by sample_id."""
