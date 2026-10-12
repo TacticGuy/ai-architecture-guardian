@@ -19,3 +19,5 @@ data/pyg/*
 data/pr_samples/
 data/future_pr_samples/
 models/*.pt
+data/embeddings/
+data/future_pr_samples_v3/
