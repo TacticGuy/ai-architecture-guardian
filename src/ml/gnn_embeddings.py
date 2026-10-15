@@ -48,7 +48,8 @@ def export_gnn_embeddings(
             for batch in DataLoader(graphs, batch_size=batch_size, shuffle=False):
                 embedding_batches.append(model.encode(batch.to(target_device)).cpu())
     embeddings = torch.cat(embedding_batches, dim=0).to(dtype=torch.float32).contiguous()
-    expected_dim = int(checkpoint["hidden_channels"]) * 2
+    pooling_mode = str(checkpoint.get("pooling_mode", "repo_plus_touched"))
+    expected_dim = int(checkpoint["hidden_channels"]) * (2 if pooling_mode == "repo_plus_touched" else 1)
     if tuple(embeddings.shape) != (len(ordered), expected_dim):
         raise RuntimeError(
             f"Unexpected embedding shape {tuple(embeddings.shape)}; "
@@ -72,6 +73,7 @@ def export_gnn_embeddings(
         "evaluation_status": checkpoint.get("results", {}).get("status", "unverified"),
         "checkpoint_name": Path(checkpoint_path).name,
         "threshold": float(checkpoint["threshold"]),
+        "pooling_mode": pooling_mode,
     }
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -88,6 +90,7 @@ def export_gnn_embeddings(
         "checkpoint_name": bundle["checkpoint_name"],
         "split_source": split_source,
         "evaluation_status": bundle["evaluation_status"],
+        "pooling_mode": pooling_mode,
         "excluded_purged_count": excluded_purged,
         "rows": [
             {

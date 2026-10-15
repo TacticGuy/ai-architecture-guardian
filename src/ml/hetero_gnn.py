@@ -15,8 +15,9 @@ from torch_geometric.nn import HeteroConv, SAGEConv, global_mean_pool
 class HeteroRiskGNN(nn.Module):
     """Relation-aware GraphSAGE with an explicit, auditable pooling scope.
 
-    ``repo_plus_touched`` preserves the v3 architecture. The local modes keep
-    unrelated repository nodes out of the final embedding for v4.
+    ``repo_plus_touched`` preserves the v3 architecture.  The local modes are
+    intended for v4 shortcut checks: they prevent unrelated repository nodes
+    from entering the final graph embedding after message passing.
     """
 
     POOLING_MODES = {"repo_plus_touched", "touched_only", "touched_1hop"}
@@ -81,16 +82,17 @@ class HeteroRiskGNN(nn.Module):
         all_batches = torch.cat(batch_indexes, dim=0)
         all_touched = torch.cat(touched, dim=0)
         graph_count = int(data.num_graphs) if hasattr(data, "num_graphs") else 1
-        repository_embedding = global_mean_pool(all_embeddings, all_batches, size=graph_count)
         selected = all_touched
         if self.pooling_mode == "touched_1hop":
             selected_by_type = _one_hop_masks(data, {
                 node_type: data[node_type].touched_mask for node_type in self.node_types
             })
             selected = torch.cat([selected_by_type[node_type] for node_type in self.node_types], dim=0)
+
         local_embedding = _masked_mean_pool(all_embeddings, all_batches, selected, graph_count)
         if self.pooling_mode in {"touched_only", "touched_1hop"}:
             return local_embedding
+        repository_embedding = global_mean_pool(all_embeddings, all_batches, size=graph_count)
         return torch.cat([repository_embedding, local_embedding], dim=1)
 
     def forward(self, data: Any) -> torch.Tensor:
@@ -106,7 +108,11 @@ def _masked_mean_pool(embeddings: torch.Tensor, batches: torch.Tensor, mask: tor
 
 
 def _one_hop_masks(data: Any, touched: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
-    """Select touched nodes and both endpoints one edge away from them."""
+    """Select touched nodes and both endpoints one edge away from them.
+
+    Expansion always uses the original touched masks, so relation iteration order
+    cannot accidentally turn this into a two-or-more-hop neighbourhood.
+    """
     selected = {node_type: mask.clone() for node_type, mask in touched.items()}
     for (source_type, _, target_type), edge_index in data.edge_index_dict.items():
         if edge_index.numel() == 0:

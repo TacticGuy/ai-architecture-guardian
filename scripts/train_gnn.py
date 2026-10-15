@@ -16,14 +16,21 @@ from torch_geometric.loader import DataLoader
 
 from src.ml.hetero_data import TENSOR_FEATURE_NAMES, load_hetero_data
 from src.ml.hetero_gnn import HeteroRiskGNN, binary_metrics, stratified_split
-from src.ml.gnn_data import discover_samples, temporal_split
+from src.ml.gnn_data import (
+    discover_samples,
+    temporal_split,
+    temporal_split_by_repository,
+    repository_holdout_split,
+    validate_training_cohort,
+)
+from src.ml.shortcut_baselines import evaluate_shortcut_baselines
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Train a heterogeneous GNN future-risk classifier.")
-    parser.add_argument("--data-dir", type=Path, default=ROOT / "data/future_pr_samples_v3")
-    parser.add_argument("--output", type=Path, default=ROOT / "models/gnn_future_risk_v3.pt")
-    parser.add_argument("--metrics", type=Path, default=ROOT / "data/statistics/gnn_metrics_v3.json")
+    parser.add_argument("--data-dir", type=Path, default=ROOT / "data/future_pr_samples_v4")
+    parser.add_argument("--output", type=Path, default=ROOT / "models/gnn_future_risk_v4.pt")
+    parser.add_argument("--metrics", type=Path, default=ROOT / "data/statistics/gnn_metrics_v4.json")
     parser.add_argument("--epochs", type=int, default=30)
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--hidden-channels", type=int, default=32)
@@ -32,12 +39,29 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--train-cutoff", help="UTC timestamp when training outcomes must be known")
     parser.add_argument("--validation-cutoff", help="UTC timestamp when validation outcomes must be known")
     parser.add_argument(
+        "--split-config", type=Path,
+        help="JSON mapping each repository to its own train_cutoff and validation_cutoff (required for multi-repo)",
+    )
+    parser.add_argument(
+        "--repository-split-config", type=Path,
+        help="JSON with disjoint train/validation/test repository lists for unseen-repository evaluation",
+    )
+    parser.add_argument(
+        "--pooling", choices=sorted(HeteroRiskGNN.POOLING_MODES), default="touched_1hop",
+        help="Graph region pooled into the risk embedding (v4 default: touched_1hop)",
+    )
+    parser.add_argument("--min-class-count", type=int, default=20,
+                        help="Minimum safe and risky samples required in every split")
+    parser.add_argument("--min-repositories", type=int, default=3,
+                        help="Minimum repositories required across the cohort")
+    parser.add_argument(
         "--allow-smoke", action="store_true",
         help="Explicitly allow legacy unverified labels for software smoke tests only",
     )
     args = parser.parse_args(argv)
-    if args.epochs <= 0 or args.batch_size <= 0:
-        parser.error("epochs and batch size must be positive")
+    if (args.epochs <= 0 or args.batch_size <= 0 or args.min_class_count <= 0
+            or args.min_repositories <= 0):
+        parser.error("epochs, batch size and cohort minimums must be positive")
 
     random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -58,26 +82,53 @@ def main(argv: list[str] | None = None) -> int:
         print("Need at least 10 built graphs containing both labels.")
         return 2
     if args.allow_smoke:
-        if args.train_cutoff or args.validation_cutoff:
-            parser.error("Smoke mode uses its development split; omit temporal cutoffs")
+        if (args.train_cutoff or args.validation_cutoff or args.split_config
+                or args.repository_split_config):
+            parser.error("Smoke mode uses its development split; omit temporal cutoffs and split config")
         train_records, validation_records, test_records = stratified_split(records, args.seed)
         split_name = "stratified_smoke"
         purged_records = []
         purged_count = 0
+        cohort_report = None
     else:
-        if not args.train_cutoff or not args.validation_cutoff:
-            print("Training blocked: supply --train-cutoff and --validation-cutoff after inspecting cohort dates.")
-            return 2
         try:
-            splits = temporal_split(records, args.train_cutoff, args.validation_cutoff)
-        except ValueError as error:
+            if args.split_config and args.repository_split_config:
+                raise ValueError("Choose temporal --split-config or --repository-split-config, not both")
+            if args.repository_split_config:
+                repository_config = json.loads(
+                    args.repository_split_config.read_text(encoding="utf-8")
+                )
+                if not isinstance(repository_config, dict):
+                    raise ValueError("Repository split config must be a JSON object")
+                splits = repository_holdout_split(records, repository_config)
+                split_name = "repository_holdout"
+            elif args.split_config:
+                split_config = json.loads(args.split_config.read_text(encoding="utf-8"))
+                if not isinstance(split_config, dict):
+                    raise ValueError("Split config must be a JSON object keyed by owner/repository")
+                splits = temporal_split_by_repository(records, split_config)
+                split_name = "temporal_purged_per_repository"
+            else:
+                repositories = {record["sample_id"].split("#", 1)[0] for record in records}
+                if len(repositories) > 1:
+                    raise ValueError("Multi-repository training requires --split-config")
+                if not args.train_cutoff or not args.validation_cutoff:
+                    raise ValueError(
+                        "Supply --train-cutoff and --validation-cutoff after inspecting cohort dates"
+                    )
+                splits = temporal_split(records, args.train_cutoff, args.validation_cutoff)
+                split_name = "temporal_purged"
+            cohort_report = validate_training_cohort(
+                splits, min_class_count=args.min_class_count,
+                min_repositories=args.min_repositories,
+            )
+        except (OSError, json.JSONDecodeError, ValueError) as error:
             print(f"Training blocked: {error}")
             return 2
         train_records, validation_records, test_records = (
             splits[name] for name in ("train", "validation", "test")
         )
         purged_records = splits["purged"]
-        split_name = "temporal_purged"
         purged_count = len(splits["purged"])
     for name, split_records in (
         ("train", train_records), ("validation", validation_records), ("test", test_records)
@@ -88,13 +139,22 @@ def main(argv: list[str] | None = None) -> int:
     train_graphs = [_load(record) for record in train_records]
     validation_graphs = [_load(record) for record in validation_records]
     test_graphs = [_load(record) for record in test_records]
+    try:
+        shortcut_baselines = evaluate_shortcut_baselines(
+            train_records, train_graphs, validation_records, validation_graphs,
+            test_records, test_graphs,
+        )
+    except ValueError as error:
+        print(f"Training blocked: shortcut baseline failure: {error}")
+        return 2
     mean, std = _fit_scaler(train_graphs)
     for graph in train_graphs + validation_graphs + test_graphs:
         _scale(graph, mean, std)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = HeteroRiskGNN(
-        train_graphs[0].metadata(), len(TENSOR_FEATURE_NAMES), args.hidden_channels
+        train_graphs[0].metadata(), len(TENSOR_FEATURE_NAMES), args.hidden_channels,
+        pooling_mode=args.pooling,
     ).to(device)
     positives = sum(int(graph.y.item()) for graph in train_graphs)
     negatives = len(train_graphs) - positives
@@ -135,19 +195,48 @@ def main(argv: list[str] | None = None) -> int:
     _, validation_labels, validation_probabilities = _evaluate(model, validation_loader, criterion, device)
     _, test_labels, test_probabilities = _evaluate(model, test_loader, criterion, device)
     threshold = _best_f1_threshold(validation_labels, validation_probabilities)
+    evaluation_status = (
+        "repository_holdout_evaluation"
+        if split_name == "repository_holdout"
+        else "temporal_evaluation"
+    )
     results = {
-        "status": "smoke_evaluation_not_final" if args.allow_smoke else "temporal_evaluation",
+        "status": "smoke_evaluation_not_final" if args.allow_smoke else evaluation_status,
         "split": split_name,
+        "pooling_mode": args.pooling,
         "purged_count": purged_count,
+        "cohort": cohort_report,
         "score_type": "uncalibrated_sigmoid",
         "cutoffs": {"train": args.train_cutoff, "validation": args.validation_cutoff},
+        "repository_split_config": (
+            str(args.repository_split_config) if args.repository_split_config else None
+        ),
         "device": str(device),
         "seed": args.seed,
         "train_count": len(train_graphs),
         "validation": binary_metrics(validation_labels, validation_probabilities, threshold),
         "test": binary_metrics(test_labels, test_probabilities, threshold),
+        "shortcut_baselines": shortcut_baselines,
         "warning": "Compare baselines and inspect test uncertainty before claiming predictive value.",
     }
+    best_shortcut_name, best_shortcut = max(
+        shortcut_baselines.items(), key=lambda item: item[1]["test"]["pr_auc_average_precision"]
+    )
+    results["shortcut_check"] = {
+        "best_baseline": best_shortcut_name,
+        "best_baseline_test_pr_auc": best_shortcut["test"]["pr_auc_average_precision"],
+        "gnn_test_pr_auc": results["test"]["pr_auc_average_precision"],
+        "gnn_beats_best_baseline": (
+            results["test"]["pr_auc_average_precision"]
+            > best_shortcut["test"]["pr_auc_average_precision"]
+        ),
+    }
+    if not args.allow_smoke and not results["shortcut_check"]["gnn_beats_best_baseline"]:
+        results["status"] = "shortcut_check_failed"
+        results["warning"] = (
+            "The GNN did not beat the strongest shortcut baseline on the held-out test set. "
+            "Do not present this checkpoint as validated predictive evidence."
+        )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     torch.save({
         "model_state_dict": model.state_dict(),
@@ -156,6 +245,7 @@ def main(argv: list[str] | None = None) -> int:
         "feature_mean": mean.cpu(),
         "feature_std": std.cpu(),
         "hidden_channels": args.hidden_channels,
+        "pooling_mode": args.pooling,
         "threshold": threshold,
         "seed": args.seed,
         "split_sample_ids": {

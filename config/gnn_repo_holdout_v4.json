@@ -1,0 +1,12 @@
+{
+  "train": [
+    "pallets/flask",
+    "pallets/jinja"
+  ],
+  "validation": [
+    "pallets/click"
+  ],
+  "test": [
+    "pallets/werkzeug"
+  ]
+}
