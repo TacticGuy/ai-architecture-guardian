@@ -665,6 +665,28 @@ data folders directly, so changing the page cannot change the pipeline. The
 colour pairs were checked for colour-blind safety and contrast; keep each pair
 together. `tests/test_dashboard.py` runs the app headless on test data.
 
+### Live GitHub PR demo
+
+Score one public GitHub pull request with the already-trained V4 GNN,
+CodeReviewer and fusion classifier:
+
+```powershell
+python scripts/analyze_live_pr.py --url https://github.com/pallets/click/pull/3880 --max-hunks 3
+```
+
+The command fetches GitHub's current synthetic test-merge revision, runs the
+unchanged Steps 2–5 on its first-parent base checkout, embeds the integrated
+production-code diff, then saves the result under `data/live/`. Set
+`GITHUB_TOKEN` to increase the GitHub API rate limit; a
+public PR does not otherwise require authentication. The dashboard's **Live
+GitHub PR** tab provides the same operation.
+
+Live reports deliberately have `label: null`: an open PR has no observable
+six-month outcome. They are inference-only and are never added to training or
+evaluation. PRs with no analysed production Python change, or only new files
+that have no nodes in the base graph, are rejected instead of receiving a
+misleading structural score.
+
 ## Rebuild everything for a data version (run_all)
 
 When the GNN teammate delivers a new data version (manifest, GNN embeddings,

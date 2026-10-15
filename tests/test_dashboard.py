@@ -82,7 +82,7 @@ def app(tmp_path, monkeypatch):
 def test_all_tabs_render_without_errors(app):
     app.run()
     assert not app.exception
-    assert [tab.label for tab in app.tabs] == ["Overview", "PR explorer", "Ask the chatbot"]
+    assert [tab.label for tab in app.tabs] == ["Overview", "PR explorer", "Live GitHub PR", "Ask the chatbot"]
     assert app.metric[0].value == "7"                                          # PRs in the dataset
     f1_tile = next(metric for metric in app.metric if metric.label == "Fusion test F1")
     assert f1_tile.value == "0.750" and not f1_tile.delta                     # same as baseline: no arrow

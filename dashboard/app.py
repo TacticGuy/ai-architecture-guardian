@@ -26,6 +26,7 @@ ROOT = Path(os.environ.get("GUARDIAN_ROOT", Path(__file__).resolve().parents[1])
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from dashboard import data as views  # noqa: E402
+from src.live_pr import LivePRError, analyze_live_pr  # noqa: E402
 from src.rag.api import Chatbot  # noqa: E402
 from src.rag.llm import LLMError  # noqa: E402
 
@@ -33,7 +34,7 @@ from src.rag.llm import LLMError  # noqa: E402
 TITLE = "AI Architecture Guardian"
 SUBTITLE = ("Predicts whether a merged Python PR touches code that will need an architectural refactor "
             "within six months, and explains why.")
-TAB_NAMES = ("Overview", "PR explorer", "Ask the chatbot")
+TAB_NAMES = ("Overview", "PR explorer", "Live GitHub PR", "Ask the chatbot")
 TOP_HUNKS = 10            # rows in the layer B table
 TOP_FILES = 10            # bars in the layer C chart
 BAR_SIZE = 14             # bar thickness in pixels
@@ -117,7 +118,7 @@ head = views.headline(metrics)
 threshold = head.get("threshold", 0.5)
 colors = palette()
 
-overview, explorer, chat = st.tabs(list(TAB_NAMES))
+overview, explorer, live, chat = st.tabs(list(TAB_NAMES))
 
 # --- Overview --------------------------------------------------------------------------------------
 with overview:
@@ -215,6 +216,50 @@ with explorer:
             else:
                 st.caption("Layer C was skipped for this PR (run explain_prs.py without --no-graph).")
             st.caption(explanation.get("note", ""))
+
+# --- Live GitHub PR -------------------------------------------------------------------------------
+with live:
+    st.subheader("Analyse an open GitHub pull request")
+    st.caption("Uses the PR's base graph and current diff. The result has no historical true label and is not "
+               "added to the training dataset. First analysis may take a few minutes.")
+    live_url = st.text_input("Public GitHub PR URL", placeholder="https://github.com/owner/repo/pull/123")
+    live_hunks = st.slider("Diff hunks to explain", min_value=0, max_value=5, value=3)
+    if st.button("Analyse live PR", type="primary", disabled=not live_url.strip()):
+        try:
+            with st.spinner("Fetching PR, building its base graph, and running the models…"):
+                report, saved_path = analyze_live_pr(
+                    live_url.strip(), ROOT,
+                    manifest_path=ROOT / "artifacts" / f"gnn_embeddings_{version}.json",
+                    token=os.getenv("GITHUB_TOKEN"), max_hunks=live_hunks,
+                )
+            st.session_state["live_report"] = report
+            st.session_state["live_saved_path"] = str(saved_path)
+        except (LivePRError, OSError, ValueError, RuntimeError) as exc:
+            st.error(str(exc))
+    live_report = st.session_state.get("live_report")
+    if live_report:
+        st.markdown(f"**[{live_report['sample_id']}]({live_report['url']}) — {live_report['title']}**")
+        live_cols = st.columns(4)
+        live_cols[0].metric("Fusion risk", f"{live_report['risk_percent']:.1f}%")
+        live_cols[1].metric("Decision", live_report["classification"].replace("_", " "))
+        live_cols[2].metric("GNN score", f"{live_report['gnn_probability']:.3f}")
+        live_cols[3].metric("Threshold", f"{live_report['threshold']:.3f}")
+        st.caption(live_report["warning"])
+        st.subheader("Structure vs diff")
+        live_parts = pd.DataFrame(views.layer_a_rows(live_report))
+        st.altair_chart(bar_chart(live_parts, "Logit", "Part", "Direction",
+                                  ["pushes risk down", "pushes risk up"],
+                                  [colors["down"], colors["up"]],
+                                  ["Part", "Logit", "Direction"], "Logit"), width="stretch")
+        explanation = live_report.get("xai")
+        if explanation:
+            st.subheader("Influential changed hunks")
+            live_rows = views.layer_b_rows(explanation, TOP_HUNKS)
+            st.dataframe(pd.DataFrame(live_rows).drop(columns=["snippet"]), hide_index=True, width="stretch")
+            for hunk in live_rows[:3]:
+                with st.expander(f"{hunk['File']} lines {hunk['Lines']} ({hunk['Effect on risk']:+.4f})"):
+                    st.code(hunk["snippet"] or "(no changed lines)", language="diff")
+        st.caption("Saved locally: " + st.session_state.get("live_saved_path", ""))
 
 # --- Chat -------------------------------------------------------------------------------------------
 with chat:
