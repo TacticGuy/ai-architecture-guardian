@@ -136,6 +136,16 @@ def test_model_and_dataset_cards_copy_the_real_numbers(tmp_path):
     assert "train outcomes known by 2021-05-05" in dataset
 
 
+def test_repository_holdout_with_null_temporal_cutoffs_builds_dataset_card(tmp_path):
+    paths = make_project(tmp_path)
+    paths["gnn_metrics"].write_text(json.dumps(
+        {"cutoffs": {"train": None, "validation": None}}
+    ), encoding="utf-8")
+    dataset = cards_of(paths)["dataset"].text
+    assert "Dataset: 7 PRs" in dataset
+    assert "Split cutoffs:" not in dataset
+
+
 # --- the inputs must agree --------------------------------------------------------------------
 
 def test_fusion_results_from_another_manifest_are_refused(tmp_path):

@@ -55,6 +55,7 @@ def load_gnn_model(checkpoint: dict[str, Any], device: str | torch.device) -> He
         checkpoint["metadata"],
         len(checkpoint["feature_names"]),
         int(checkpoint["hidden_channels"]),
+        pooling_mode=str(checkpoint.get("pooling_mode", "repo_plus_touched")),
     ).to(target_device)
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()

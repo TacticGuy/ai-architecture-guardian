@@ -256,9 +256,11 @@ def dataset_card(inputs: dict[str, Any]) -> Card:
         lines.append(f"Purged (removed because their six-month window crosses a split cutoff): "
                      f"{len(inputs['purged'])} PRs: {', '.join(inputs['purged'])}.")
     cutoffs = (inputs.get("gnn_metrics") or {}).get("cutoffs")
-    if cutoffs:
-        lines.append(f"Split cutoffs: train outcomes known by {cutoffs.get('train', '')[:10]}, "
-                     f"validation by {cutoffs.get('validation', '')[:10]}; test PRs merged after the second cutoff.")
+    train_cutoff = cutoffs.get("train") if isinstance(cutoffs, dict) else None
+    validation_cutoff = cutoffs.get("validation") if isinstance(cutoffs, dict) else None
+    if isinstance(train_cutoff, str) and isinstance(validation_cutoff, str):
+        lines.append(f"Split cutoffs: train outcomes known by {train_cutoff[:10]}, "
+                     f"validation by {validation_cutoff[:10]}; test PRs merged after the second cutoff.")
     splits = {split: {"prs": sum(1 for row in rows if row["split"] == split),
                       "risky": sum(row["label"] for row in rows if row["split"] == split)} for split in SPLITS}
     return Card(id="dataset", kind="dataset", title="Dataset and splits", text="\n".join(lines),
