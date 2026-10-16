@@ -6,6 +6,7 @@ import { motion } from "framer-motion";
 import { useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 
+import { Footer } from "@/components/Footer";
 import { NavBar } from "@/components/NavBar";
 import { AnimatedCard } from "@/components/spectrumui/animated-card";
 import { BeamCard } from "@/components/spectrumui/beam-card";
@@ -306,9 +307,7 @@ export default function Landing() {
         </section>
       </main>
 
-      <footer className="border-t border-border py-8 text-center text-sm text-muted-foreground">
-        AI Architecture Guardian. Static analysis, graph learning and explainable AI for Python pull requests.
-      </footer>
+      <Footer />
     </div>
   );
 }
