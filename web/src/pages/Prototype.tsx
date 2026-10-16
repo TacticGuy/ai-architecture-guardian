@@ -3,6 +3,7 @@ import { Bot, GitPullRequest, LayoutDashboard, Search } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
+import { Footer } from "@/components/Footer";
 import { NavBar } from "@/components/NavBar";
 import { Notice } from "@/components/kit";
 import { api } from "@/lib/api";
@@ -94,6 +95,7 @@ export default function Prototype() {
           )}
         </div>
       </main>
+      <Footer />
     </div>
   );
 }
