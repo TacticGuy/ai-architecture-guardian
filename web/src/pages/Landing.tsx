@@ -233,7 +233,7 @@ export default function Landing() {
 
         <Section
           id="features" eyebrow="Features" title="What the system does"
-          intro="Every capability below is implemented in this repository and available in the prototype."
+          intro="Every capability below is implemented in this project and available in the prototype."
         >
           <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
             {features.map((feature, index) => (
