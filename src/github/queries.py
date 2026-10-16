@@ -8,6 +8,7 @@ query PullRequests($owner: String!, $name: String!, $cursor: String, $pageSize: 
       pageInfo { hasNextPage endCursor }
       nodes {
         number title body url state merged mergedAt createdAt updatedAt changedFiles
+        mergeCommit { oid }
         author { login }
         commits(first: $commitsFirst) {
           pageInfo { hasNextPage endCursor }
@@ -27,6 +28,27 @@ query PullRequestCommits($owner: String!, $name: String!, $number: Int!, $cursor
       commits(first: $pageSize, after: $cursor) {
         pageInfo { hasNextPage endCursor }
         nodes { commit { message } }
+      }
+    }
+  }
+  rateLimit { limit cost remaining resetAt }
+}
+"""
+
+# Repository connections avoid the search API's result-count cap. Walking by
+# creation time also includes long-lived PRs opened before the merge-date window.
+PULL_REQUESTS_HISTORY_QUERY = """
+query PullRequestHistory($owner: String!, $name: String!, $cursor: String, $pageSize: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequests(first: $pageSize, after: $cursor, states: MERGED,
+      orderBy: {field: CREATED_AT, direction: ASC}) {
+      pageInfo { hasNextPage endCursor }
+      nodes {
+        number title body url state merged mergedAt createdAt updatedAt changedFiles
+        baseRefName headRefOid
+        mergeCommit { oid }
+        author { login }
+        commits { totalCount }
       }
     }
   }

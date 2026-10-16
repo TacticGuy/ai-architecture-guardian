@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Any, Iterator
 
+from src.filtering.automation_filter import is_automated_pr
 from src.filtering.impact_filter import passes_impact_filter
 from src.filtering.semantic_filter import semantic_filter
 
@@ -13,6 +14,7 @@ from src.filtering.semantic_filter import semantic_filter
 @dataclass
 class FilterStatistics:
     total_raw_prs: int = 0
+    automation_rejected: int = 0
     impact_passed: int = 0
     impact_rejected: int = 0
     semantic_passed: int = 0
@@ -26,6 +28,14 @@ def evaluate_record(pr: dict[str, Any], minimum_changed_files: int, keywords: li
     """Return an auditable decision record while updating exactly one statistics object."""
     statistics.total_raw_prs += 1
     result = dict(pr)
+    result["automation_filter"] = not is_automated_pr(result)
+    if not result["automation_filter"]:
+        statistics.automation_rejected += 1
+        result["impact_filter"] = False
+        result["semantic_filter"] = False
+        result["matched_keywords"] = []
+        result["filter_status"] = "rejected_automation"
+        return result
     result["impact_filter"] = passes_impact_filter(result, minimum_changed_files)
     result["matched_keywords"] = []
     if not result["impact_filter"]:

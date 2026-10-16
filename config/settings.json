@@ -13,14 +13,17 @@
   "impact_min_changed_files": 3,
   "repository_storage_directory": "data/repositories",
   "analysis_output_directory": "data/analysis",
+  "pyg_output_directory": "data/pyg",
   "clone_timeout_seconds": 600,
   "static_analysis": {
     "include_tests": false,
     "max_python_files_per_repository": 10000,
     "excluded_directory_names": [
       ".git", ".venv", "venv", "env", "__pycache__", ".tox", ".nox",
-      "build", "dist", "node_modules", ".mypy_cache", ".pytest_cache"
-    ]
+      "build", "dist", "node_modules", ".mypy_cache", ".pytest_cache",
+      "docs", "doc", "examples", "benchmarks"
+    ],
+    "excluded_file_names": ["setup.py", "conftest.py"]
   },
   "semantic_keywords": [
     "refactor", "refactoring", "architecture", "architectural",
