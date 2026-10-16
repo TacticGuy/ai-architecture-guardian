@@ -1,12 +1,10 @@
-"""Dashboard: the table helpers, and a headless run of the real app on test data (no Groq calls)."""
+"""Table helpers in api/views.py (tests/test_api.py exercises them end to end)."""
 from __future__ import annotations
 
 import shutil
 from pathlib import Path
 
-import pytest
-
-from dashboard import data as views
+from api import views
 from src.rag.api import Chatbot
 from src.rag.knowledge import build_cards, load_inputs, save_cards
 from tests.test_chatbot import ScriptedModel
@@ -64,58 +62,3 @@ def test_explanation_rows_for_the_three_layers(tmp_path):
 def test_dataset_summary_lists_purged_prs_and_cutoffs(tmp_path):
     summary = Chatbot.from_version("v7", llm=ScriptedModel(), root=project_root(tmp_path)).dataset_summary()
     assert summary["purged"] == ["o/r#5", "o/r#25"] and summary["cutoffs"]["train"].startswith("2021-05-05")
-
-
-# --- the real app, headless -------------------------------------------------------------------------
-
-def pr_picker(app):
-    return next(box for box in app.selectbox if box.label == "Pull request")
-
-
-@pytest.fixture
-def app(tmp_path, monkeypatch):
-    testing = pytest.importorskip("streamlit.testing.v1")
-    monkeypatch.setenv("GUARDIAN_ROOT", str(project_root(tmp_path)))
-    return testing.AppTest.from_file(str(ROOT / "dashboard/app.py"), default_timeout=60)
-
-
-def test_all_tabs_render_without_errors(app):
-    app.run()
-    assert not app.exception
-    assert [tab.label for tab in app.tabs] == ["Overview", "PR explorer", "Live GitHub PR", "Ask the chatbot"]
-    assert app.metric[0].value == "7"                                          # PRs in the dataset
-    f1_tile = next(metric for metric in app.metric if metric.label == "Fusion test F1")
-    assert f1_tile.value == "0.750" and not f1_tile.delta                     # same as baseline: no arrow
-    assert any("Fusion" in str(frame.value) for frame in app.dataframe)
-    picker = pr_picker(app)
-    assert picker.options[0].startswith("#30 · test · risky")             # explained PRs first, highest score
-    assert len(picker.options) == 2                                        # only explained PRs by default
-    assert any(metric.value == "correct" for metric in app.metric)
-    assert any("Layer C" in header.value for header in app.subheader)
-
-
-def test_explorer_can_show_unexplained_prs_and_wrong_predictions(app):
-    app.run()
-    app.checkbox[0].uncheck().run()                                           # show all PRs
-    picker = pr_picker(app)
-    assert len(picker.options) == 7
-    picker.select_index(next(i for i, text in enumerate(picker.options) if text.startswith("#32"))).run()
-    assert not app.exception
-    assert any(metric.value == "WRONG" for metric in app.metric)
-    assert any("no XAI explanation yet" in info.value for info in app.info)
-
-
-def test_chat_tab_answers_with_sources(app):
-    app.session_state["llm_factory"] = lambda config: ScriptedModel("PR o/r#30 scored 0.765 [pr:o/r#30].")
-    app.run()
-    app.chat_input[0].set_value("Why is PR #30 risky?").run()
-    assert not app.exception
-    assert any("0.765" in block.value for block in app.markdown)
-    assert any("Sources: pr:o/r#30" in caption.value for caption in app.caption)
-
-
-def test_missing_knowledge_base_shows_how_to_build_it(tmp_path, monkeypatch):
-    testing = pytest.importorskip("streamlit.testing.v1")
-    monkeypatch.setenv("GUARDIAN_ROOT", str(tmp_path))
-    app = testing.AppTest.from_file(str(ROOT / "dashboard/app.py"), default_timeout=60).run()
-    assert "build_kb.py" in app.error[0].value

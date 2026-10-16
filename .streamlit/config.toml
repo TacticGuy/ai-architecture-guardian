@@ -1,7 +1,0 @@
-# Dashboard theme (Streamlit). Change base to "dark" for a dark dashboard; the chart colours
-# in dashboard/app.py switch with it automatically.
-[theme]
-base = "light"
-
-[server]
-headless = true

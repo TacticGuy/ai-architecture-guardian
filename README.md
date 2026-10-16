@@ -641,29 +641,39 @@ experiments, GNN/fusion training, score calibration and live-PR preparation.
 XAI, RAG, benchmark comparisons and dashboard integration follow the agreed
 encoder/label interface. No reliable final checkpoint has been trained yet.
 
-## Dashboard
+## Web app
 
-A Streamlit dashboard shows the fusion results, every PR's explanation and the
-chatbot in one page.
+A React (Tailwind CSS) front end and a FastAPI back end replace the former Streamlit
+dashboard. There are two pages: a **landing page** describing the project, and the
+**prototype** with the fusion results, every PR's explanation, live GitHub PR analysis
+and the chatbot. Both have a light/dark toggle.
 
 ```text
 pip install -r requirements.txt
 python scripts/build_kb.py --manifest artifacts/gnn_embeddings_v3.json
-streamlit run dashboard/app.py
+uvicorn api.main:app --port 8000          # terminal 1: back end
+
+cd web
+npm install
+npm run dev                               # terminal 2: front end at http://localhost:5173
 ```
 
-Tabs: **Overview** (four models side by side with bootstrap ranges, warnings,
-every test PR's risk score against the threshold, dataset splits and purged PRs),
-**PR explorer** (score, true label, correct or wrong, and XAI layers A, B and C)
-and **Ask the chatbot** (grounded answers with their sources; needs `GROQ_API_KEY`
-in `.env`). Browsing works without a Groq key.
+`npm run dev` proxies `/api` to port 8000. For a production build run `npm run build`
+in `web/` (output in `web/dist/`) and serve it with any static host that forwards `/api`
+to the back end.
 
-Editing it: wording, colours and sizes are in the `SETTINGS` block at the top of
-`dashboard/app.py`; the light/dark theme is in `.streamlit/config.toml`. The
-dashboard reads data only through `src/rag/api.py` (`Chatbot`), never from the
-data folders directly, so changing the page cannot change the pipeline. The
-colour pairs were checked for colour-blind safety and contrast; keep each pair
-together. `tests/test_dashboard.py` runs the app headless on test data.
+Prototype tabs: **Overview** (four models side by side with bootstrap ranges, warnings,
+every test PR's risk score against the threshold, dataset splits and purged PRs),
+**PR explorer** (score, true label, correct or wrong, and XAI layers A, B and C),
+**Live GitHub PR** and **Ask the chatbot** (grounded answers with their sources; needs
+`GROQ_API_KEY` in `.env`). Browsing works without a Groq key.
+
+The back end (`api/main.py`) reads data only through `src/rag/api.py` (`Chatbot`) and
+`src/live_pr.py`, and shapes tables with `api/views.py`, so changing the interface
+cannot change the pipeline. Endpoints: `/api/versions`, `/api/overview`, `/api/prs`,
+`/api/prs/detail`, `/api/live`, `/api/chat`, `/api/chat/reset`. `tests/test_api.py`
+runs it on test data. The front end uses Spectrum UI components (beam card, beam search
+bar, loading button, animated card) in `web/src/components/`.
 
 ### Live GitHub PR demo
 
@@ -678,7 +688,7 @@ The command fetches GitHub's current synthetic test-merge revision, runs the
 unchanged Steps 2–5 on its first-parent base checkout, embeds the integrated
 production-code diff, then saves the result under `data/live/`. Set
 `GITHUB_TOKEN` to increase the GitHub API rate limit; a
-public PR does not otherwise require authentication. The dashboard's **Live
+public PR does not otherwise require authentication. The web app's **Live
 GitHub PR** tab provides the same operation.
 
 Live reports deliberately have `label: null`: an open PR has no observable
