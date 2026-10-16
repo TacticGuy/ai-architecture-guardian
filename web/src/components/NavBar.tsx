@@ -37,7 +37,7 @@ export function NavBar({ links }: { links?: { label: string; href: string }[] })
   return (
     <header className="sticky top-0 z-40 border-b border-border bg-background/80 backdrop-blur-md">
       <div className="mx-auto flex h-16 max-w-6xl items-center justify-between gap-4 px-4 sm:px-6">
-        <Link to="/" className="flex items-center gap-3 font-display text-sm font-bold uppercase tracking-tight sm:text-lg" aria-label="AI Architecture Guardian home">
+        <Link to="/" className="flex items-center gap-3 font-display text-[13px] font-medium uppercase tracking-[0.12em] sm:text-[15px]" aria-label="AI Architecture Guardian home">
           <Logo className="size-9 shrink-0 rounded-lg ring-1 ring-border sm:size-10" />
           <span className="leading-none">AI Architecture Guardian</span>
         </Link>
