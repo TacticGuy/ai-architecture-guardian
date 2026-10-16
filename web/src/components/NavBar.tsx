@@ -1,6 +1,7 @@
 import { Moon, Sun } from "lucide-react";
 import { Link } from "react-router-dom";
 
+import { GithubIcon, REPO_URL } from "@/components/GithubIcon";
 import { Logo } from "@/components/Logo";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/lib/theme";
@@ -51,6 +52,12 @@ export function NavBar({ links }: { links?: { label: string; href: string }[] })
               {link.label}
             </a>
           ))}
+          <a
+            href={REPO_URL} target="_blank" rel="noreferrer" aria-label="AI Architecture Guardian on GitHub" title="View on GitHub"
+            className="flex size-9 items-center justify-center rounded-full border border-border text-muted-foreground transition-colors hover:border-foreground/30 hover:text-foreground"
+          >
+            <GithubIcon className="size-4" />
+          </a>
           <ThemeToggle />
         </nav>
       </div>
