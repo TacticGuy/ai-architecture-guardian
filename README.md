@@ -16,8 +16,8 @@ The locked static-analysis pipeline is:
 
 The repository also includes PR scraping, historical Git snapshots, structural
 graph comparisons, reviewed future-refactor labeling and GNN risk scores.
-CodeBERT, fusion, XAI, RAG, LLM remediation and the dashboard are not implemented
-in this branch.
+CodeBERT, fusion, XAI, RAG and LLM remediation are not implemented in this
+branch. The web interface is described under [Web app](#web-app).
 
 The existing 107-sample checkpoint is a development model. Its dataset has
 repository, year and refactor-event concentration. Its randomly split metrics
@@ -242,7 +242,8 @@ labels and audit metadata, never in graph features or the diff encoder input.
 | 13: score for a prepared graph | Implemented; current model is a smoke model |
 | New PR/branch preparation command | Pending |
 | 14–18: XAI, attributed subgraph, KB, RAG, explanation | Pending |
-| Dashboard and benchmark comparisons | Pending |
+| Web app (React front end, FastAPI back end) | Implemented |
+| Benchmark comparisons | Pending |
 
 ## Prediction target and label evidence
 
@@ -638,19 +639,26 @@ requires review of the real collected PRs and events.
 The next work is complete historical collection, an evidence-based event
 definition, the final graph-input contract, a diverse cohort, temporal baseline
 experiments, GNN/fusion training, score calibration and live-PR preparation.
-XAI, RAG, benchmark comparisons and dashboard integration follow the agreed
+XAI, RAG and benchmark comparisons follow the agreed
 encoder/label interface. No reliable final checkpoint has been trained yet.
 
 ## Web app
 
-A React (Tailwind CSS) front end and a FastAPI back end replace the former Streamlit
-dashboard. There are two pages: a **landing page** describing the project, and the
-**prototype** with the fusion results, every PR's explanation, live GitHub PR analysis
-and the chatbot. Both have a light/dark toggle.
+The former Streamlit dashboard has been replaced by a web app with two pages: a
+**landing page** that explains the project, and the **prototype** that works on the
+real project outputs. A light/dark toggle is available on both pages.
 
-```text
+| Part | Folder | Stack |
+| --- | --- | --- |
+| Front end | `web/` | React, Tailwind CSS, Framer Motion, Spectrum UI components |
+| Back end | `api/` | FastAPI |
+
+Run it (two terminals; `web/README.md` has the short version):
+
+```powershell
 pip install -r requirements.txt
-python scripts/build_kb.py --manifest artifacts/gnn_embeddings_v3.json
+python scripts/build_kb.py --manifest artifacts/gnn_embeddings_v3.json   # once
+
 uvicorn api.main:app --port 8000          # terminal 1: back end
 
 cd web
@@ -658,22 +666,24 @@ npm install
 npm run dev                               # terminal 2: front end at http://localhost:5173
 ```
 
-`npm run dev` proxies `/api` to port 8000. For a production build run `npm run build`
-in `web/` (output in `web/dist/`) and serve it with any static host that forwards `/api`
+`npm run dev` forwards `/api` to port 8000. For a production build run `npm run build`
+in `web/` (output in `web/dist/`) and serve it with a static host that forwards `/api`
 to the back end.
 
-Prototype tabs: **Overview** (four models side by side with bootstrap ranges, warnings,
-every test PR's risk score against the threshold, dataset splits and purged PRs),
-**PR explorer** (score, true label, correct or wrong, and XAI layers A, B and C),
-**Live GitHub PR** and **Ask the chatbot** (grounded answers with their sources; needs
-`GROQ_API_KEY` in `.env`). Browsing works without a Groq key.
+Prototype tabs:
+
+- **Overview**: four models side by side with bootstrap ranges, warnings, every test
+  PR's risk score against the threshold, dataset splits and purged PRs.
+- **PR explorer**: score, true label, correct or wrong, and XAI layers A, B and C.
+- **Live GitHub PR**: score a public pull request (see below).
+- **Ask the chatbot**: grounded answers with their sources; needs `GROQ_API_KEY` in
+  `.env`. Browsing the other tabs works without a Groq key.
 
 The back end (`api/main.py`) reads data only through `src/rag/api.py` (`Chatbot`) and
 `src/live_pr.py`, and shapes tables with `api/views.py`, so changing the interface
 cannot change the pipeline. Endpoints: `/api/versions`, `/api/overview`, `/api/prs`,
-`/api/prs/detail`, `/api/live`, `/api/chat`, `/api/chat/reset`. `tests/test_api.py`
-runs it on test data. The front end uses Spectrum UI components (beam card, beam search
-bar, loading button, animated card) in `web/src/components/`.
+`/api/prs/detail`, `/api/live`, `/api/chat`, `/api/chat/reset`. `tests/test_api.py` and
+`tests/test_views.py` run it on test data.
 
 ### Live GitHub PR demo
 
