@@ -1,4 +1,4 @@
-"""The chatbot's public API. The dashboard (and anything else) should use only this module.
+"""The chatbot's public API. The web API (and anything else) should use only this module.
 
     bot = Chatbot.from_version("v3")            # reads data/kb/v3/cards.jsonl and config/chatbot.json
     answer = bot.ask("Why was PR #5648 flagged as risky?")

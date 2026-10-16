@@ -1,0 +1,129 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --background: #ffffff;
+  --foreground: #0a0a0a;
+  --card: #ffffff;
+  --muted: #f5f5f5;
+  --muted-foreground: #6b6b6b;
+  --border: rgba(0, 0, 0, 0.1);
+  --input: rgba(0, 0, 0, 0.14);
+  --ring: #0a0a0a;
+  --primary: #0a0a0a;
+  --primary-foreground: #fafafa;
+  --secondary: #f1f1f1;
+  --secondary-foreground: #0a0a0a;
+  --accent: #f1f1f1;
+  --accent-foreground: #0a0a0a;
+  --destructive: #dc2626;
+  --destructive-foreground: #fafafa;
+  /* Chart pairs carried over from the original dashboard (colour-blind safe, checked for contrast). */
+  --chart-safe: #2a78d6;
+  --chart-risky: #eb6834;
+  --chart-ink: #52514e;
+}
+
+.dark {
+  --background: #0a0a0a;
+  --foreground: #f5f5f5;
+  --card: #0a0a0a;
+  --muted: #171717;
+  --muted-foreground: #a3a3a3;
+  --border: rgba(255, 255, 255, 0.12);
+  --input: rgba(255, 255, 255, 0.16);
+  --ring: #f5f5f5;
+  --primary: #f5f5f5;
+  --primary-foreground: #0a0a0a;
+  --secondary: #1c1c1c;
+  --secondary-foreground: #f5f5f5;
+  --accent: #1c1c1c;
+  --accent-foreground: #f5f5f5;
+  --destructive: #ef4444;
+  --destructive-foreground: #fafafa;
+  --chart-safe: #3987e5;
+  --chart-risky: #d95926;
+  --chart-ink: #c3c2b7;
+}
+
+@theme inline {
+  --font-sans: "Geist", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Geist Mono", ui-monospace, SFMono-Regular, monospace;
+  --font-spectral: "Spectral", Georgia, "Times New Roman", serif;
+  --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, monospace;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-safe: var(--chart-safe);
+  --color-risky: var(--chart-risky);
+  --animate-fade-up: fade-up 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-drift: drift 14s ease-in-out infinite alternate;
+}
+
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes drift {
+  from { transform: translate3d(0, 0, 0); }
+  to { transform: translate3d(0, -18px, 0); }
+}
+
+html { scroll-behavior: smooth; }
+
+/* Heading intro: one band of red, yellow, green, cyan and violet sweeps left to right through the glyphs once on
+   load, then the text settles to its normal colour. The bottom layer is always the solid foreground. */
+.chroma-text {
+  color: transparent;
+  -webkit-background-clip: text;
+  background-clip: text;
+  background-image:
+    linear-gradient(90deg, transparent 0 38%, #ff2a6d 41%, #ffd23f 45%, #3dff8b 50%, #2ad4ff 55%, #7a5cff 59%, transparent 62% 100%),
+    linear-gradient(var(--foreground), var(--foreground));
+  background-size: 320% 100%, 100% 100%;
+  background-repeat: no-repeat;
+  background-position: 100% 0, 0 0;
+}
+.chroma-text-animate { animation: chroma-sweep 2.8s cubic-bezier(0.45, 0.1, 0.4, 1) 0.2s both; }
+@keyframes chroma-sweep {
+  from { background-position: 100% 0, 0 0; }
+  to { background-position: 0% 0, 0 0; }
+}
+@media (prefers-reduced-motion: reduce) { .chroma-text-animate { animation: none; } }
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  transition: background-color 0.25s ease, color 0.25s ease;
+}
+
+.grid-bg {
+  background-image:
+    linear-gradient(to right, var(--border) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--border) 1px, transparent 1px);
+  background-size: 56px 56px;
+  mask-image: radial-gradient(ellipse 70% 60% at 50% 0%, #000 30%, transparent 75%);
+  -webkit-mask-image: radial-gradient(ellipse 70% 60% at 50% 0%, #000 30%, transparent 75%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+  html { scroll-behavior: auto; }
+}

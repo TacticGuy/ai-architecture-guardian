@@ -100,7 +100,7 @@ def main(argv: list[str] | None = None, encoder_factory: Callable | None = None,
     record["result"] = "ok" if code == 0 else "failed"
     _log(paths["runs"] / "run.json", record)
     if code == 0:
-        print(f"\nAll done for {version}. Dashboard: streamlit run dashboard/app.py | "
+        print(f"\nAll done for {version}. Web app: uvicorn api.main:app --port 8000 (+ npm run dev in web/) | "
               f"Chat: python scripts/chat.py --manifest {args.manifest}")
     return code
 

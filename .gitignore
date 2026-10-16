@@ -33,3 +33,7 @@ data/kb/
 data/eval/
 data/runs/
 data/live/
+
+# Web frontend
+web/node_modules/
+web/dist/

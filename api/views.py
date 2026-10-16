@@ -1,6 +1,6 @@
-"""Turn chat-API data into small tables for the dashboard. No Streamlit here, so it is easy to test.
+"""Turn chat-API data into small tables for the web API. Pure functions, so they are easy to test.
 
-The dashboard reads everything through src/rag/api.py (Chatbot); these helpers only reshape.
+The API reads everything through src/rag/api.py (Chatbot); these helpers only reshape.
 """
 from __future__ import annotations
 
