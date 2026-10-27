@@ -1,4 +1,4 @@
-"""v5 attribution files (data/xai_v5/) and their RAG explanations (data/rag_v5/explanations/).
+"""v5 attribution files (data/xai/v5/) and their RAG explanations (data/rag_v5/explanations/).
 
     GET /api/v5/attributions                          list, optional ?split=&degrading=&q=
     GET /api/v5/attributions/{owner}/{repo}/{number}  one attribution JSON + "explanation" (or null)
@@ -47,7 +47,7 @@ def _valid_name(value: str) -> bool:
 
 
 def create_router(root: Path, xai_dir: Path | None = None, explanations_dir: Path | None = None) -> APIRouter:
-    xai_dir = Path(xai_dir or root / "data/xai_v5")
+    xai_dir = Path(xai_dir or root / "data/xai/v5")
     explanations_dir = Path(explanations_dir or root / "data/rag_v5/explanations")
     router = APIRouter(prefix="/api/v5", tags=["v5 attribution"])
 

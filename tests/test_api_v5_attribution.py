@@ -18,7 +18,7 @@ FIXTURES = Path(__file__).parent / "fixtures" / "attribution_v5"
 
 @pytest.fixture
 def root(tmp_path):
-    xai = tmp_path / "data/xai_v5"
+    xai = tmp_path / "data/xai/v5"
     xai.mkdir(parents=True)
     for path in FIXTURES.glob("*.json"):
         shutil.copy(path, xai / path.name)
