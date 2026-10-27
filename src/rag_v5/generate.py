@@ -33,6 +33,7 @@ def _prompt(attribution: dict[str, Any], cards: list[dict[str, Any]]) -> tuple[s
     evidence = {
         "title": attribution.get("title"), "risk_score": attribution.get("risk_score"),
         "threshold": attribution.get("threshold"), "layer_a": attribution.get("layer_a"),
+        "history_features": attribution.get("history_features") or {},
         "edges": [{"edge": edge_label(e), "attribution": e["attribution"],
                    "added_in_pr": e.get("added_in_pr", False)} for e in positive + negative],
         "module_evidence": {name: attribution.get("module_evidence", {}).get(name)
@@ -41,7 +42,9 @@ def _prompt(attribution: dict[str, Any], cards: list[dict[str, Any]]) -> tuple[s
         "cards": [{"id": c["id"], "title": c["title"], "text": c["text"]} for c in cards],
     }
     system = ("You explain a Python PR's architecture-risk model output. Use ONLY the supplied evidence. "
-              "Never treat the score as a calibrated probability. Return strict JSON with keys verdict "
+              "The layer_a parts may include base, structure_gnn, history, and diff; history_features "
+              "describe recent change activity for the touched files. Never treat the score as a "
+              "calibrated probability. Return strict JSON with keys verdict "
               "('degrading' or 'safe'), explanation (3-6 plain sentences), evidence (list of objects "
               "with edge and why), principles (retrieved card ids only), suggestion (refactoring, files, "
               "steps, optional code_sketch), and confidence_note. Cite edges exactly as provided. "

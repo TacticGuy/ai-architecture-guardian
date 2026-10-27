@@ -10,7 +10,8 @@
   "risk_score": 0.12,
   "threshold": 0.47,
   "predicted_degrading": false,
-  "layer_a": {"base": -1.5, "structure_gnn": -0.5, "diff": 0.1},
+  "layer_a": {"base": -1.5, "structure_gnn": -0.5, "history": -0.1, "diff": 0.1},
+  "history_features": {"touched_file_commits_6m": 2, "touched_file_churn_6m": 14, "recent_contributors": 1},
   "changed_files": ["src/safe/parser.py"],
   "touched_modules": ["safe.parser"],
   "top_edges": [

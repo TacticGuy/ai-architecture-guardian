@@ -25,9 +25,10 @@ uses ordinary BM25 on the PR title and changed-code text. This comparison
 tests whether graph-attribution retrieval adds value beyond lexical matching.
 
 The language model receives a deliberately small evidence packet: the title,
-score and threshold, structure-versus-diff contribution, a few strongest
-positive and negative edges, coupling values for touched modules, two code
-hunks, and up to three retrieved cards. It must return JSON with a verdict,
+score and threshold, the base, structure-GNN, history, and diff contributions,
+recent change-history features for the touched files, a few strongest positive
+and negative edges, coupling values for touched modules, two code hunks, and up
+to three retrieved cards. It must return JSON with a verdict,
 plain-English explanation, edge citations, principle IDs, and a minimal
 refactoring suggestion. A checker rejects references to edges absent from the
 attribution file, principles absent from the retrieved cards, and numbers not

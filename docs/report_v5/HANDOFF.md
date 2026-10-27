@@ -11,6 +11,8 @@
   bootstrap intervals, Wilcoxon tests, results table, and chart.
 - `scripts/rag_v5_survey.py`: blinded A/B/C form text, private key, and real-response analysis.
 - 50 sourced design cards in `docs/principles/`.
+- The explanation prompt accepts the four-part Layer A split (`base`, `structure_gnn`,
+  `history`, and `diff`) and includes the new `history_features` evidence object.
 - Synthetic high-risk and safe fixtures, clearly marked as test-only.
 - Mathematical formulations, proofs with necessary conditions, report draft, guidelines,
   reference template, and survey shell.

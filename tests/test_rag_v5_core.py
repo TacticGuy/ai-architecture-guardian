@@ -68,8 +68,10 @@ def test_grounding_rejects_unknown_claims():
 class FakeLLM:
     def __init__(self, responses):
         self.responses = iter(responses)
+        self.calls = []
 
     def complete(self, system, user):
+        self.calls.append((system, user))
         return next(self.responses)
 
 
@@ -94,6 +96,10 @@ def test_all_modes_run_offline_with_fake_llm(mode):
               "evidence": [], "principles": [],
               "suggestion": {"refactoring": "None", "files": [], "steps": []},
               "confidence_note": "This output is not a probability."}
-    result = explain_pr(data, mode=mode, llm=FakeLLM([json.dumps(answer)]))
+    llm = FakeLLM([json.dumps(answer)])
+    result = explain_pr(data, mode=mode, llm=llm)
     assert result["verdict"] == "safe"
     assert result["mode"] == mode
+    prompt = json.loads(llm.calls[0][1])
+    assert prompt["layer_a"]["history"] == -0.1
+    assert prompt["history_features"]["touched_file_commits_6m"] == 2
