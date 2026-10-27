@@ -15,13 +15,21 @@ score. A chatbot answers questions using only these real outputs.
 3. Turn that analysis into a dependency graph with 15 numeric features per node.
 4. Convert it to a PyTorch Geometric heterogeneous graph (six node types).
 5. Label each PR from what happened in the six months after it (see "Labels").
-6. GNN: a relation-aware GraphSAGE model turns the graph into a 64-number vector.
+6. GNN: a relation-aware GraphSAGE model turns the touched files and their direct
+   neighbours into a 32-number vector (v4).
 7. CodeReviewer: reads the PR's diff and turns it into a 768-number vector.
 8. Fusion: shrinks both vectors with PCA and predicts risk with logistic regression.
 9. XAI: explains each PR's score in three layers (structure vs diff, diff hunks, code files).
 10. Chatbot: answers questions from the outputs above, citing its sources.
+11. Web app: a React front end and a FastAPI back end show the results, every PR's
+    explanation, live analysis of any public GitHub PR, and the chatbot.
 
 ## Team ownership
-The data collection, labels and GNN were built by one teammate; the CodeReviewer
-embeddings, fusion model, XAI and chatbot by another. The dashboard is a separate part
-that only reads the chatbot's outputs.
+The team has three members. Sai Praveen Moturi built the PR collection, filtering,
+repository cloning and the static analysis (AST extraction, dependency graph and node
+features), and the React and FastAPI web app. Shynaa Chopra, the team leader, built the
+before/after PR snapshots, the reviewed labels and the GNN, including the v4 repository
+holdout, the shortcut baselines and live GitHub PR analysis. V Harsha Sai Vallumkonda built
+the PyTorch Geometric graph conversion, the CodeReviewer embeddings, the fusion model, the
+three explanation layers, the knowledge base, the chatbot and its evaluation, and run_all.
+The web app only reads the project outputs, so it cannot change the pipeline.

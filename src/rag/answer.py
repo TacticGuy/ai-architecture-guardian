@@ -29,7 +29,12 @@ model is, mention the warnings in the model card (small data, wide ranges, compa
 that the cards do not state.
 7. When you explain a single PR, always say its true label (risky or safe) and whether the prediction was correct \
 or wrong, and, if the card has them, the touched-files and untouched-files totals from layer C.
-8. Write in plain, simple English for an engineering student. Keep it short: a few sentences or bullet points."""
+8. Write in plain, simple English for an engineering student. Keep it short: a few sentences or bullet points.
+9. When you explain why a single PR got its score, start with layer A: say which part (structure or diff) pushed \
+the risk up and which pushed it down, and which part was larger, using the card's "In words (layer A)" line. \
+Negative values push the risk down; positive values push it up.
+10. The reviewer's note describes the later refactor PR, not the PR you are explaining. Never describe it as the \
+PR's own change; say it is why the later refactor counts as architectural."""
 
 _CITATION = re.compile(r"\[([a-z]+:[^\]\s]+|dataset)\]")
 _NUMBER = re.compile(r"(?<![\w.#/-])[-+]?\d+(?:\.\d+)?%?(?![\w/])")

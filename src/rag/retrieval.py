@@ -22,14 +22,28 @@ these those what which who whom why how does do did can could would should will 
 about from into than then there their them they has have had not no yes so if but""".split())
 
 # Topic words that must always bring a specific card, because BM25 alone can miss them.
+# Matched as whole words or phrases ("date" does not match "update").
 _TOPICS = {
-    "model:fusion": ("accuracy", "accurate", "f1", "precision", "recall", "pr-auc", "auc", "baseline",
-                     "how good", "performance", "perform", "metric", "metrics", "results", "beat", "chance"),
-    "dataset": ("dataset", "how many prs", "split", "splits", "purged", "purge", "cutoff", "train set",
-                "training data", "data size"),
-    "predictions:test": ("false positive", "false negative", "wrong", "mistake", "misclassified",
-                         "which prs", "list of prs", "test prs", "correct"),
+    "model:fusion": ("accuracy", "accurate", "f1", "precision", "recall", "pr-auc", "auc", "baseline", "baselines",
+                     "how good", "how well", "good is", "well does", "performance", "perform", "performs",
+                     "performed", "metric", "metrics", "result", "results", "beat", "beats", "chance", "fusion",
+                     "codereviewer", "always risky", "always-risky", "gnn only", "compare", "compared",
+                     "comparison", "better", "worse", "best", "evaluate", "evaluation", "test split", "test set",
+                     "held-out", "held out", "overfit", "overfits", "overfitting", "score on", "scores on",
+                     "threshold"),
+    "model:shortcuts": ("shortcut", "shortcuts", "merge date", "date", "repository size", "repo size",
+                        "validated", "validation evidence", "trust", "trustworthy", "real signal", "learned"),
+    "dataset": ("dataset", "how many prs", "how many pull requests", "split", "splits", "purged", "purge",
+                "cutoff", "train set", "training data", "data size", "repositories", "repository", "repos",
+                "projects", "flask", "jinja", "click", "werkzeug", "risky prs", "safe prs", "holdout"),
+    "predictions:test": ("false positive", "false positives", "false negative", "false negatives", "wrong",
+                         "mistake", "mistakes", "misclassified", "which prs", "list of prs", "test prs", "correct",
+                         "missed", "caught"),
 }
+
+
+def _has(text: str, phrase: str) -> bool:
+    return re.search(rf"(?<![a-z0-9]){re.escape(phrase)}(?![a-z0-9])", text) is not None
 
 
 @dataclass
@@ -63,7 +77,8 @@ class Retriever:
     def __init__(self, cards: list[Card], k1: float = 1.5, b: float = 0.75) -> None:
         self.cards = cards
         self.k1, self.b = k1, b
-        self.documents = [tokenize(card.title + " " + card.text) for card in cards]
+        # a note's file title ("Limitations") is searchable too, so "what are the limitations?" finds its notes
+        self.documents = [tokenize(f"{card.title} {card.meta.get('section', '')} {card.text}") for card in cards]
         self.lengths = [len(document) for document in self.documents]
         self.average_length = (sum(self.lengths) / len(self.lengths)) if self.lengths else 0.0
         self.frequencies = [Counter(document) for document in self.documents]
@@ -109,7 +124,7 @@ class Retriever:
                 add(card, float("inf"), "pr-number")
         lowered = question.lower()
         for card_id, words in _TOPICS.items():
-            if not any(word in lowered for word in words):
+            if not any(_has(lowered, word) for word in words):
                 continue
             targets = [card_id]
             if card_id == "predictions:test":                # use the split the question names, test by default
@@ -123,11 +138,16 @@ class Retriever:
         # A question about named PRs gets only a couple of extra cards: sharper answers, fewer tokens.
         limit = min(max(k, len(hits)), len(hits) + 2) if pinned_prs else max(k, len(hits))
         ranked = sorted(zip(self.bm25(question), range(len(self.cards))), key=lambda pair: (-pair[0], pair[1]))
+        searched_prs = 0
         for score, index in ranked:
             if len(hits) >= limit or score <= 0:
                 break
             card = self.cards[index]
             if card.id in _SPLIT_WORDS and not any(word in lowered for word in _SPLIT_WORDS[card.id]):
                 continue                                # big prediction tables only when their split is asked about
+            if card.kind == "pr" and (pinned_prs or searched_prs >= 1):
+                continue                                # named PRs get no unrelated PRs; others at most one example
+            if card.kind == "pr":
+                searched_prs += 1
             add(card, score, "search")
         return hits

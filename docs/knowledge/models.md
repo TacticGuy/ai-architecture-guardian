@@ -5,10 +5,11 @@ The GNN is a relation-aware GraphSAGE network with two message-passing layers ov
 heterogeneous code graph with six node types: module, class, function, method, external
 module and external callable. Every node has 15 numeric features such as lines of code,
 parameter counts, cyclomatic complexity and in/out degrees; features are log-transformed
-and standardised with statistics from the training PRs only. After message passing it
-takes two averages: one over all nodes in the repository and one over the nodes in files
-the PR touched. Joining them gives a 64-number vector per PR (32 + 32). The GNN also has its
-own small classifier, used for its own reported scores.
+and standardised with statistics from the training PRs only. After message passing, the
+current version (v4) averages the node vectors in the files the PR touched and their direct
+(one-hop) neighbours, giving a 32-number vector per PR. The earlier version (v3) took two
+averages, one over the whole repository and one over the touched files, giving 64 numbers
+(32 + 32). The GNN also has its own small classifier, used for its own reported scores.
 
 ## CodeReviewer (diff model)
 CodeReviewer (microsoft/codereviewer) is a pretrained T5 model trained on real code-review

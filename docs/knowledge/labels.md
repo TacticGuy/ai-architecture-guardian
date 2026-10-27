@@ -14,12 +14,14 @@ the sample PR, a written rationale and evidence links. PR titles or messages alo
 make a PR positive or negative. Records with missing coverage or unresolved reviews get no
 label and are never used as training negatives.
 
-## Time-based split and purging
-PRs are split by time, not at random, because the tool must predict future PRs from past
-ones. Train PRs have their whole six-month outcome window before the first cutoff;
-validation PRs start after it and finish before the second cutoff; test PRs start after
-the second cutoff. PRs whose outcome window crosses a cutoff are purged (removed), because
-their label would leak information from a later period into an earlier one.
+## How the data is split
+In the current version (v4) whole repositories are kept apart, which is called a repository
+holdout. Flask and Jinja are the training repositories, Click is the validation repository
+used once to pick the decision threshold, and Werkzeug is the test repository that the
+models never see while training. This stops a model from scoring well only because it
+learned one project's habits. The earlier version (v3) split PRs by merge time instead and
+purged (removed) PRs whose six-month window crossed a split cutoff. The dataset card lists
+the PRs per split and per repository.
 
 ## Why the split sizes matter
 The model learns only from the train split. The validation split is used once, to pick the
