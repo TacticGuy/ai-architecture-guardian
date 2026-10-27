@@ -133,3 +133,22 @@ def test_explain_script_writes_the_contract_file(sample, tmp_path):
     assert 0.0 <= payload["unfaithfulness"] <= 1.0
     assert explain_sample(record, "test", str(checkpoint), str(sample["clones"]), str(out), SETTINGS, 16, 5)[
         "status"] == "existing"
+
+
+def test_pack_for_kaggle_writes_every_upload_file(sample, tmp_path):
+    import gzip
+    import zipfile
+    from scripts.pack_v5_for_kaggle import main as pack_main
+    split = tmp_path / "split.json"
+    split.write_text(json.dumps({"train": [], "validation": [], "test": ["o/r"]}), encoding="utf-8")
+    out = tmp_path / "kaggle"
+    data_dir = Path(sample["record"]["_dir"]).parents[1]
+    assert pack_main(["--data-dir", str(data_dir), "--out-dir", str(out), "--split", str(split)]) == 0
+    assert {p.name for p in out.iterdir()} == {"graphs_v5.pt.gz", "diffs_v5.jsonl", "coupling_split_v5.json",
+                                               "code.zip", "v5_manifest.jsonl"}
+    with gzip.open(out / "graphs_v5.pt.gz", "rb") as source, open(tmp_path / "g.pt", "wb") as target:
+        target.write(source.read())
+    assert [g.sample_id for g in load_packed_graphs(tmp_path / "g.pt")] == ["o/r#1"]
+    names = zipfile.ZipFile(out / "code.zip").namelist()
+    assert "scripts/train_coupling_gnn.py" in names and "src/ml/coupling_data.py" in names
+    assert not any("__pycache__" in name for name in names)
