@@ -1,0 +1,87 @@
+# Graph validation against established tools (v5, Mandatory 1)
+
+**Question.** Does our AST-based dependency graph get its edges right? We measured each edge
+type against an independent reference and report precision (P), recall (R) and F1. Full
+tables: `data/validation_v5/results.md`. Every disagreement is listed in `results.json`.
+
+**Reproduce.** `python scripts/validate_graph_v5.py --pycg-dir <PyCG clone> --repos-dir <checkouts> --out data/validation_v5/`
+
+## Method
+
+| Edge type | Reference | Data |
+|---|---|---|
+| CALLS | PyCG micro-benchmark: hand-written `callgraph.json` per program [1] | 119 snippets in 18 categories (PyCG commit `8d5dc40`) |
+| IMPORTS | grimp, the import graph behind import-linter [2] | 10 repositories at pinned tags (table below) |
+| CALLS, INHERITS, ACCESSES_GLOBAL | Hand-labelled gold set (`tests/fixtures/validation_v5/`) | 6 real files from 6 repositories, 99 relations |
+
+Both sides are reduced to the same unit before comparing:
+* **PyCG:** internal (caller, callee) name pairs. Instantiating a class counts as a call to its
+  `__init__`, as PyCG writes it. External callees (`<builtin>.*`, the standard library) are
+  dropped from the ground truth, because our graph has no nodes for them.
+* **grimp:** internal module → module pairs, with module names normalised (a `src.` prefix is
+  stripped).
+* **Gold set:** (relation, source, target) triples, under rules written down before scoring
+  (`README.md` in the fixtures folder).
+
+All scores are micro-averaged. **The PyCG programs and the 10 repositories are not our
+dataset.** This measures the extraction *method* on independent code, not the 6,141 PRs.
+
+## Results
+
+| Check | Precision | Recall | F1 |
+|---|---|---|---|
+| CALLS vs PyCG micro-benchmark (ours) | 97.2 | 43.6 | 60.2 |
+| CALLS, PyCG itself (paper, not run here [1]) | 99.2 | 69.9 | |
+| IMPORTS vs grimp, 10 repositories | 97.7 | 100.0 | 98.8 |
+| IMPORTS vs grimp, modules both tools scan | 100.0 | 100.0 | 100.0 |
+| Gold set: CALLS | 97.9 | 88.7 | 93.1 |
+| Gold set: INHERITS | 100.0 | 76.3 | 86.6 |
+| Gold set: ACCESSES_GLOBAL | 40.0 | 50.0 | 44.4 |
+
+Repositories and tags for grimp: flask 3.1.3, click 8.5.0, requests v2.34.2, httpx 0.28.1,
+rich v15.0.0, attrs 26.1.0, starlette 1.10.0, black 26.10.1, marshmallow 4.3.1 and typer 0.27.3.
+The commit of each is in `results.json`.
+
+## Error analysis
+
+* **IMPORTS are reliable.** All 27 disagreements come from flask, where `flask/sansio/` is an
+  implicit namespace package (it has no `__init__.py`). grimp does not scan it and we do. On
+  modules both tools see, the two graphs are identical in all 10 repositories (1,159 edges). We
+  checked every disagreement in flask, requests and click; requests and click have none.
+* **CALLS edges are precise, but recall is limited** to what plain AST name resolution can see.
+  On PyCG, 106 of 109 predicted edges are right. Misses concentrate where values flow through
+  data or returns: `assignments` 0%, `dicts` 26%, `kwargs` 20%, `builtins` 20% and `lambdas` 36%
+  recall, against 93% for `imports` and 67% for `classes`. On real code (the gold set) recall is
+  much higher, at 88.7%, because most calls there are direct. All 3 PyCG false positives, and the
+  only gold-set one, are real bugs (B5, B6, B8 in `bugs_found.md`).
+* **INHERITS misses only builtin bases.** 8 of the 9 misses are `ValueError`, `OSError`,
+  `Warning` and similar: builtin bases are dropped (B1). Every internal base and every
+  non-builtin external base was found.
+* **ACCESSES_GLOBAL is the weakest relation**, and the sample is small (8 gold relations). 5 of
+  the 6 false positives are names used only in type annotations (B2). The misses come from
+  default argument values (B3) and module-level code (B7). Fixing B2 alone would lift precision
+  from 40% to 80%.
+
+Nine extraction bugs, each with a minimal example, are in `bugs_found.md`. They are reported
+to the graph-builder owner, not fixed here, so that the dataset and the code stay consistent.
+
+## Limitations
+
+* **PyCG row.** PyCG could not be run on this machine. It needs Python 3.8–3.10 in a separate
+  environment, and installing the cloned tool was not done. Its row quotes the paper's abstract.
+  The paper counts all callees, including external ones, so that row is a reference point, not a
+  like-for-like comparison. `--pycg-python <interpreter>` adds a real row with the same conversion.
+* **Gold set.** The gold set is small (6 files, 99 relations) and was labelled by one person.
+  The second-labeller agreement on `starlette/config.py` is reported once
+  `second_labeller.json` is filled in. The labels are a careful reading, not executed ground truth.
+* **Recall ceiling.** Static name resolution cannot see dynamic dispatch, monkey-patching or
+  values passed around in containers. For coupling this mostly means *missing* edges, which
+  makes our coupling measures conservative.
+
+## References
+
+[1] V. Salis, T. Sotiropoulos, P. Louridas, D. Spinellis, D. Mitropoulos. "PyCG: Practical Call
+Graph Generation in Python." ICSE 2021. arXiv:2103.00587. The abstract reports precision ~99.2%
+and recall ~69.9%. Benchmark: https://github.com/vitsalis/PyCG (`micro-benchmark/`).
+[2] grimp, https://github.com/python-grimp/grimp (version 3.18), the graph library used by
+import-linter: https://import-linter.readthedocs.io.
