@@ -69,8 +69,8 @@ python scripts/rag_v5_survey.py --responses path/to/real_responses.csv
    from those files and their real GitHub diffs.
 3. Live generation requires the user's Groq key. No key was created or committed.
 4. The survey must be sent to real respondents; their answers must not be synthesized.
-5. `data/rag_v5/` should be added to `.gitignore` by the integration owner because this
-   work package forbids editing the existing `.gitignore`.
+5. Harsha will add `data/rag_v5/` to `.gitignore` during integration; this branch intentionally
+   leaves the existing `.gitignore` unchanged.
 
 ## Verification and known issues
 
