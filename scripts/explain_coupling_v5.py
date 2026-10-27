@@ -34,7 +34,7 @@ from src.ml.coupling_data import (  # noqa: E402
 from src.ml.hetero_gnn import HeteroRiskGNN  # noqa: E402
 from src.xai.coupling_attribution import (  # noqa: E402
     LogitModel, build_context, edge_integrated_gradients, gnnexplainer_edges, hunk_effects,
-    node_integrated_gradients, parse_hunks, ranked_edges, ranked_nodes, unfaithfulness,
+    node_integrated_gradients, parse_hunks, ranked_edges, ranked_nodes, structure_history_split, unfaithfulness,
 )
 
 SCHEMA = "attribution_v5/1"
@@ -49,7 +49,8 @@ def file_name(sample_id: str) -> str:
 def load_model(checkpoint_path: Path) -> tuple[LogitModel, dict]:
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
     gnn = HeteroRiskGNN(checkpoint["metadata"], len(checkpoint["feature_names"]), checkpoint["hidden_channels"],
-                        layers=checkpoint["layers"], pooling_mode=checkpoint["pooling_mode"])
+                        layers=checkpoint["layers"], pooling_mode=checkpoint["pooling_mode"],
+                        dropout=checkpoint.get("dropout", 0.2), history_dim=checkpoint.get("history_dim", 0))
     gnn.load_state_dict(checkpoint["model_state_dict"])
     gnn.eval()
     for parameter in gnn.parameters():
@@ -86,6 +87,13 @@ def explain_sample(record: dict, split_name: str, checkpoint_path: str, clones: 
 
     graph = load_coupling_graph(record)
     apply_scaler(graph, checkpoint["feature_mean"], checkpoint["feature_std"])
+    history_raw = None
+    if checkpoint.get("history_dim", 0):
+        if not hasattr(graph, "hist"):
+            raise RuntimeError(f"{record['sample_id']} has no history.json but the model needs history features")
+        history_raw = dict(zip(checkpoint["history_feature_names"], graph.hist.view(-1).tolist()))
+        model.hist = ((graph.hist - checkpoint["history_mean"]) / checkpoint["history_std"]).view(1, -1)
+    split_parts = structure_history_split(model, graph)
     edge_ig = edge_integrated_gradients(model, graph, steps=steps)
     node_ig = node_integrated_gradients(model, graph, steps=steps)
     explainer_masks = gnnexplainer_edges(model, graph, epochs=gnnexplainer_epochs) if gnnexplainer_epochs else None
@@ -111,10 +119,11 @@ def explain_sample(record: dict, split_name: str, checkpoint_path: str, clones: 
         "label": record["label"], "label_reason": record["label_reason"],
         "risk_score": round(probability, 6), "threshold": round(threshold, 6),
         "predicted_degrading": probability >= threshold,
-        # The GNN alone is explained here (no diff branch), so diff = 0 and the parts add up to
-        # the GNN logit: base = score when every node looks like an average training node.
-        "layer_a": {"base": round(node_ig["baseline_score"], 6),
-                    "structure_gnn": round(logit - node_ig["baseline_score"], 6), "diff": 0.0},
+        # The GNN alone is explained (no diff branch), so diff = 0. base + structure_gnn + history
+        # + diff adds up to the logit (exact two-player Shapley split; history = 0 without v5.1 inputs).
+        "layer_a": {"base": round(split_parts["base"], 6), "structure_gnn": round(split_parts["structure_gnn"], 6),
+                    "history": round(split_parts["history"], 6), "diff": 0.0},
+        "history_features": history_raw,
         "logit": round(logit, 6),
         "changed_files": record["changed_python_files"], "touched_modules": touched,
         "top_edges": ranked_edges(graph, edge_ig["attributions"], context, limit=30, gnnexplainer=explainer_masks),

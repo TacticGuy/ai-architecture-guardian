@@ -25,8 +25,8 @@ import torch  # noqa: E402
 from torch_geometric.loader import DataLoader  # noqa: E402
 
 from src.ml.coupling_data import (  # noqa: E402
-    INPUT_FEATURE_NAMES, apply_scaler, discover_coupling_samples, fit_scaler, load_coupling_graph,
-    load_packed_graphs, repository_split, seed_everything,
+    HISTORY_FEATURE_NAMES, INPUT_FEATURE_NAMES, apply_history_scaler, apply_scaler, discover_coupling_samples,
+    fit_history_scaler, fit_scaler, load_coupling_graph, load_packed_graphs, repository_split, seed_everything,
 )
 from src.ml.hetero_gnn import HeteroRiskGNN, binary_metrics  # noqa: E402
 
@@ -46,6 +46,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--layers", type=int, default=2)
     parser.add_argument("--learning-rate", type=float, default=0.002)
     parser.add_argument("--pooling", default="touched_1hop", choices=sorted(HeteroRiskGNN.POOLING_MODES))
+    parser.add_argument("--dropout", type=float, default=0.2)
+    parser.add_argument("--weight-decay", type=float, default=1e-3)
+    parser.add_argument("--no-history", action="store_true",
+                        help="ignore the v5.1 pre-merge history features even if the samples have them")
     args = parser.parse_args(argv)
 
     started = time.perf_counter()
@@ -74,6 +78,22 @@ def main(argv: list[str] | None = None) -> int:
     for items in graphs.values():
         for graph in items:
             apply_scaler(graph, mean, std)
+    every = [graph for items in graphs.values() for graph in items]
+    use_history = not args.no_history and all(hasattr(graph, "hist") for graph in every)
+    if not args.no_history and not use_history and any(hasattr(graph, "hist") for graph in every):
+        print("Some samples have no history.json: training WITHOUT history features")
+    history_mean = history_std = None
+    if use_history:
+        history_mean, history_std = fit_history_scaler(graphs["train"])
+        for graph in every:
+            apply_history_scaler(graph, history_mean, history_std)
+    else:
+        for graph in every:
+            if hasattr(graph, "hist"):
+                del graph.hist
+    args.history_dim = len(HISTORY_FEATURE_NAMES) if use_history else 0
+    args.history_mean, args.history_std = history_mean, history_std
+    print(f"History features: {'on' if use_history else 'off'}")
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     runs = []
@@ -81,7 +101,8 @@ def main(argv: list[str] | None = None) -> int:
         runs.append(train_one(seed, graphs, mean, std, args))
     summary = {"split": split, "input_features": list(INPUT_FEATURE_NAMES), "seeds": args.seeds,
                "settings": {key: getattr(args, key) for key in ("epochs", "patience", "batch_size", "hidden_channels",
-                                                                "layers", "learning_rate", "pooling")},
+                                                                "layers", "learning_rate", "pooling", "dropout",
+                                                                "weight_decay", "history_dim")},
                "runs": runs}
     for metric in ("f1", "pr_auc_average_precision", "precision", "recall"):
         values = [run["test"][metric] for run in runs]
@@ -96,11 +117,12 @@ def train_one(seed: int, graphs, mean, std, args) -> dict:
     seed_everything(seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = HeteroRiskGNN(graphs["train"][0].metadata(), len(INPUT_FEATURE_NAMES), args.hidden_channels,
-                          layers=args.layers, pooling_mode=args.pooling).to(device)
+                          layers=args.layers, pooling_mode=args.pooling, dropout=args.dropout,
+                          history_dim=args.history_dim).to(device)
     positives = sum(int(graph.y) for graph in graphs["train"])
     criterion = torch.nn.BCEWithLogitsLoss(
         pos_weight=torch.tensor([(len(graphs["train"]) - positives) / max(positives, 1)], device=device))
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate, weight_decay=1e-3)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
     loader = DataLoader(graphs["train"], batch_size=args.batch_size, shuffle=True)
     best_state, best_score, stale = copy.deepcopy(model.state_dict()), -1.0, 0
     for epoch in range(1, args.epochs + 1):
@@ -137,6 +159,8 @@ def train_one(seed: int, graphs, mean, std, args) -> dict:
     torch.save({"model_state_dict": model.state_dict(), "metadata": graphs["train"][0].metadata(),
                 "feature_names": list(INPUT_FEATURE_NAMES), "feature_mean": mean, "feature_std": std,
                 "hidden_channels": args.hidden_channels, "layers": args.layers, "pooling_mode": args.pooling,
+                "dropout": args.dropout, "history_dim": args.history_dim, "history_feature_names": list(HISTORY_FEATURE_NAMES),
+                "history_mean": args.history_mean, "history_std": args.history_std,
                 "threshold": threshold, "seed": seed}, run_dir / "model.pt")
     with (run_dir / "predictions.csv").open("w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)

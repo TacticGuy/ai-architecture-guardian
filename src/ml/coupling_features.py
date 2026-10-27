@@ -23,7 +23,9 @@ def read_sample(record: dict[str, Any]) -> dict[str, Any]:
     folder = Path(record["_dir"])
     metrics = json.loads((folder / "metrics.json").read_text(encoding="utf-8"))
     diff = (folder / record.get("diff_path", "diff.patch")).read_text(encoding="utf-8", errors="replace")
-    return {"metrics": metrics, "diff": diff}
+    history_path = folder / "history.json"
+    history = json.loads(history_path.read_text(encoding="utf-8"))["features"] if history_path.is_file() else None
+    return {"metrics": metrics, "diff": diff, "history": history}
 
 
 def diff_lines(diff: str) -> tuple[list[str], list[str]]:
@@ -66,3 +68,8 @@ def diff_tokens(sample: dict[str, Any]) -> str:
     plus = " ".join(f"A_{token}" for line in added for token in _TOKEN.findall(line))
     minus = " ".join(f"R_{token}" for line in removed for token in _TOKEN.findall(line))
     return f"{plus} {minus}"
+
+
+def history_feature_table(record: dict[str, Any], sample: dict[str, Any]) -> dict[str, float]:
+    """v5.1 pre-merge history (coupling momentum, change activity); see src/dataset/history_features."""
+    return {name: float(value) for name, value in sample["history"].items()}
