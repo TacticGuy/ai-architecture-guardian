@@ -1,0 +1,53 @@
+{
+  "_note": "synthetic example for tests only",
+  "schema": "attribution_v5/1",
+  "sample_id": "pallets/flask#5123", "repo": "pallets/flask", "title": "Move CLI loading into app factory",
+  "merged_at": "2023-05-02T10:11:12+00:00", "split": "test",
+  "label": 1, "label_reason": "excess_coupling_growth",
+  "risk_score": 0.81, "threshold": 0.47, "predicted_degrading": true,
+  "layer_a": {"base": -0.20, "structure_gnn": 1.10, "diff": 0.55},
+  "changed_files": ["src/flask/app.py", "src/flask/cli.py"],
+  "touched_modules": ["flask.app", "flask.cli"],
+  "top_edges": [
+    {"source": "src/flask/app.py:flask.app.Flask.run", "source_type": "method", "source_module": "flask.app",
+     "relation": "CALLS", "target": "src/flask/cli.py:flask.cli.load_dotenv", "target_type": "function",
+     "target_module": "flask.cli", "attribution": 0.42, "added_in_pr": true, "touched_source": true, "touched_target": true},
+    {"source": "src/flask/app.py:flask.app", "source_type": "module", "source_module": "flask.app",
+     "relation": "IMPORTS", "target": "src/flask/cli.py:flask.cli", "target_type": "module",
+     "target_module": "flask.cli", "attribution": 0.31, "added_in_pr": true, "touched_source": true, "touched_target": true},
+    {"source": "src/flask/cli.py:flask.cli.ScriptInfo.load_app", "source_type": "method", "source_module": "flask.cli",
+     "relation": "CALLS", "target": "src/flask/app.py:flask.app.Flask", "target_type": "class",
+     "target_module": "flask.app", "attribution": 0.22, "added_in_pr": false, "touched_source": true, "touched_target": true},
+    {"source": "src/flask/cli.py:flask.cli.FlaskGroup", "source_type": "class", "source_module": "flask.cli",
+     "relation": "INHERITS", "target": "src/flask/cli.py:flask.cli.AppGroup", "target_type": "class",
+     "target_module": "flask.cli", "attribution": -0.18, "added_in_pr": false, "touched_source": true, "touched_target": true},
+    {"source": "src/flask/app.py:flask.app.Flask.run", "source_type": "method", "source_module": "flask.app",
+     "relation": "ACCESSES_GLOBAL", "target": "src/flask/cli.py:flask.cli._env_loaded", "target_type": "global_variable",
+     "target_module": "flask.cli", "attribution": 0.15, "added_in_pr": true, "touched_source": true, "touched_target": true},
+    {"source": "src/flask/helpers.py:flask.helpers.get_debug_flag", "source_type": "function", "source_module": "flask.helpers",
+     "relation": "CALLS", "target": "src/flask/cli.py:flask.cli.load_dotenv", "target_type": "function",
+     "target_module": "flask.cli", "attribution": -0.09, "added_in_pr": false, "touched_source": false, "touched_target": true},
+    {"source": "src/flask/app.py:flask.app", "source_type": "module", "source_module": "flask.app",
+     "relation": "CONTAINS", "target": "src/flask/app.py:flask.app.Flask", "target_type": "class",
+     "target_module": "flask.app", "attribution": 0.05, "added_in_pr": false, "touched_source": true, "touched_target": true}
+  ],
+  "top_nodes": [
+    {"id": "src/flask/app.py:flask.app.Flask", "type": "class", "module": "flask.app", "file": "src/flask/app.py",
+     "attribution": 0.37, "touched": true, "is_new_in_pr": false},
+    {"id": "src/flask/cli.py:flask.cli.load_dotenv", "type": "function", "module": "flask.cli", "file": "src/flask/cli.py",
+     "attribution": 0.29, "touched": true, "is_new_in_pr": false}
+  ],
+  "module_evidence": {
+    "flask.app": {"ca_before": 14, "ce_before": 9, "ca_after": 14, "ce_after": 11, "in_import_cycle": false},
+    "flask.cli": {"ca_before": 3, "ce_before": 6, "ca_after": 4, "ce_after": 6, "in_import_cycle": true}
+  },
+  "pr_creates_cycle": true, "new_cycle_modules": ["flask.app", "flask.cli"],
+  "structural_delta": {"internal_import_edge_count": 1, "dependency_density": 0.0012},
+  "top_hunks": [
+    {"file": "src/flask/app.py", "lines": [612, 640], "effect": 0.051,
+     "snippet": ["+        from .cli import load_dotenv", "+        load_dotenv()", "-        pass"]},
+    {"file": "src/flask/cli.py", "lines": [701, 712], "effect": -0.012,
+     "snippet": ["     def load_dotenv(path=None):", "-        return False", "+        return _load(path)"]}
+  ],
+  "unfaithfulness": 0.12, "explainer": "integrated_gradients_edge"
+}

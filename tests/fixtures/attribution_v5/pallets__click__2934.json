@@ -1,0 +1,39 @@
+{
+  "_note": "synthetic example for tests only",
+  "schema": "attribution_v5/1",
+  "sample_id": "pallets/click#2934", "repo": "pallets/click", "title": "Fix help text wrapping for long option names",
+  "merged_at": "2024-03-14T08:00:00+00:00", "split": "test",
+  "label": 0, "label_reason": "no_excess_coupling_growth",
+  "risk_score": 0.18, "threshold": 0.47, "predicted_degrading": false,
+  "layer_a": {"base": -0.20, "structure_gnn": -0.85, "diff": -0.47},
+  "changed_files": ["src/click/formatting.py"],
+  "touched_modules": ["click.formatting"],
+  "top_edges": [
+    {"source": "src/click/formatting.py:click.formatting.HelpFormatter.write_dl", "source_type": "method",
+     "source_module": "click.formatting", "relation": "CALLS",
+     "target": "src/click/formatting.py:click.formatting.wrap_text", "target_type": "function",
+     "target_module": "click.formatting", "attribution": -0.21, "added_in_pr": false, "touched_source": true, "touched_target": true},
+    {"source": "src/click/formatting.py:click.formatting.wrap_text", "source_type": "function",
+     "source_module": "click.formatting", "relation": "CALLS",
+     "target": "src/click/_compat.py:click._compat.term_len", "target_type": "function",
+     "target_module": "click._compat", "attribution": 0.04, "added_in_pr": true, "touched_source": true, "touched_target": false},
+    {"source": "src/click/formatting.py:click.formatting.HelpFormatter.__init__", "source_type": "method",
+     "source_module": "click.formatting", "relation": "ACCESSES_GLOBAL",
+     "target": "src/click/formatting.py:click.formatting.FORCED_WIDTH", "target_type": "global_variable",
+     "target_module": "click.formatting", "attribution": -0.03, "added_in_pr": false, "touched_source": true, "touched_target": true}
+  ],
+  "top_nodes": [
+    {"id": "src/click/formatting.py:click.formatting.wrap_text", "type": "function", "module": "click.formatting",
+     "file": "src/click/formatting.py", "attribution": -0.19, "touched": true, "is_new_in_pr": false}
+  ],
+  "module_evidence": {
+    "click.formatting": {"ca_before": 5, "ce_before": 3, "ca_after": 5, "ce_after": 3, "in_import_cycle": false}
+  },
+  "pr_creates_cycle": false, "new_cycle_modules": [],
+  "structural_delta": {"internal_import_edge_count": 0, "dependency_density": 0.0},
+  "top_hunks": [
+    {"file": "src/click/formatting.py", "lines": [255, 262], "effect": -0.008,
+     "snippet": ["-            if term_len(first) <= first_col:", "+            if term_len(first) <= first_col - col_spacing:"]}
+  ],
+  "unfaithfulness": 0.07, "explainer": "integrated_gradients_edge"
+}

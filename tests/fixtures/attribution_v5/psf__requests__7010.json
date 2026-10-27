@@ -1,0 +1,29 @@
+{
+  "_note": "synthetic example for tests only",
+  "schema": "attribution_v5/1",
+  "sample_id": "psf/requests#7010", "repo": "psf/requests", "title": "Route proxy auth through the adapter",
+  "merged_at": null, "split": "live",
+  "label": null, "label_reason": null,
+  "risk_score": 0.52, "threshold": 0.47, "predicted_degrading": true,
+  "layer_a": {"base": -0.20, "structure_gnn": 0.31, "diff": -0.03},
+  "changed_files": ["src/requests/adapters.py", "src/requests/auth.py"],
+  "touched_modules": ["requests.adapters", "requests.auth"],
+  "top_edges": [
+    {"source": "src/requests/adapters.py:requests.adapters.HTTPAdapter.proxy_headers", "source_type": "method",
+     "source_module": "requests.adapters", "relation": "CALLS",
+     "target": "src/requests/auth.py:requests.auth._basic_auth_str", "target_type": "function",
+     "target_module": "requests.auth", "attribution": 0.19, "added_in_pr": false, "touched_source": true, "touched_target": true},
+    {"source": "src/requests/auth.py:requests.auth", "source_type": "module", "source_module": "requests.auth",
+     "relation": "IMPORTS", "target": "src/requests/adapters.py:requests.adapters", "target_type": "module",
+     "target_module": "requests.adapters", "attribution": 0.14, "added_in_pr": true, "touched_source": true, "touched_target": true}
+  ],
+  "top_nodes": [],
+  "module_evidence": {
+    "requests.adapters": {"ca_before": 2, "ce_before": 8, "ca_after": 3, "ce_after": 8, "in_import_cycle": false},
+    "requests.auth": {"ca_before": 3, "ce_before": 3, "ca_after": 3, "ce_after": 4, "in_import_cycle": false}
+  },
+  "pr_creates_cycle": false, "new_cycle_modules": [],
+  "structural_delta": {"internal_import_edge_count": 1, "dependency_density": 0.0009},
+  "top_hunks": [],
+  "unfaithfulness": 0.21, "explainer": "integrated_gradients_edge"
+}
