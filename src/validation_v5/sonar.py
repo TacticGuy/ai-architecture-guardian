@@ -75,9 +75,15 @@ def project_key(sample_id: str, side: str) -> str:
 
 
 def run_scanner(folder: Path, key: str, host_url: str, token: str, image: str = SCANNER_IMAGE,
-                timeout: int = 900, extra: tuple[str, ...] = ()) -> str:
-    """Scan ``folder`` with the Docker scanner and return the Compute Engine task id."""
-    command = ["docker", "run", "--rm", "-e", f"SONAR_HOST_URL={host_url}", "-e", "SONAR_TOKEN",
+                timeout: int = 900, extra: tuple[str, ...] = (), heap: str | None = None) -> str:
+    """Scan ``folder`` with the Docker scanner and return the Compute Engine task id.
+
+    ``heap`` (e.g. "3g") sets the scanner JVM's maximum heap. The default (a quarter of the
+    container's memory) is too small for a batch of ~1,000 files: the analysis then stalls in
+    garbage collection during rule execution.
+    """
+    java = ["-e", f"SONAR_SCANNER_JAVA_OPTS=-Xmx{heap}"] if heap else []
+    command = ["docker", "run", "--rm", "-e", f"SONAR_HOST_URL={host_url}", "-e", "SONAR_TOKEN", *java,
                "-v", f"{folder.resolve()}:/usr/src", image, *extra,
                f"-Dsonar.projectKey={key}", "-Dsonar.sources=.", "-Dsonar.python.version=3",
                "-Dsonar.scm.disabled=true", "-Dsonar.sourceEncoding=UTF-8"]
@@ -201,8 +207,8 @@ def read_tree(client: SonarClient, project_key: str) -> dict[str, dict[str, floa
 
 
 def scan_batch_side(files_by_sample: dict[str, dict[str, str]], key: str, client: SonarClient, host_url: str,
-                    token: str, scanner: Callable[..., str] = run_scanner,
-                    timeout: int = 3600) -> tuple[set[str], dict[str, dict[str, float]]]:
+                    token: str, scanner: Callable[..., str] = run_scanner, timeout: int = 3600,
+                    heap: str | None = None) -> tuple[set[str], dict[str, dict[str, float]]]:
     """Scan one side of a batch as one project; return (folders written, totals per folder)."""
     try:
         with tempfile.TemporaryDirectory() as folder:
@@ -210,7 +216,8 @@ def scan_batch_side(files_by_sample: dict[str, dict[str, str]], key: str, client
             written = write_batch(root, files_by_sample)
             if not written:
                 return written, {}
-            task = scanner(root, key, host_url, token, timeout=timeout, extra=BATCH_SCANNER_ARGS)
+            task = scanner(root, key, host_url, token, timeout=timeout, extra=BATCH_SCANNER_ARGS,
+                           **({"heap": heap} if heap else {}))
         client.wait_for_task(task, timeout=timeout)
         return written, read_tree(client, key)
     finally:

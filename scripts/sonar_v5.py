@@ -49,7 +49,7 @@ def make_batches(samples: list[dict], splits: list[str], size: int) -> list[tupl
 
 
 def run_batch(index: int, batch: list[dict], repos_dir: Path, client: SonarClient, host_url: str,
-              token: str, scanner=None) -> list[dict]:
+              token: str, scanner=None, heap: str | None = None) -> list[dict]:
     before, after = {}, {}
     for sample in batch:
         repository = repository_path(repos_dir, sample["repo"])
@@ -59,6 +59,8 @@ def run_batch(index: int, batch: list[dict], repos_dir: Path, client: SonarClien
         before[sample["sample_id"]] = read_side(repository, sample["before_commit_sha"], paths)
         after[sample["sample_id"]] = read_side(repository, sample["merge_commit_sha"], paths)
     kwargs = {"scanner": scanner} if scanner else {}
+    if heap:
+        kwargs["heap"] = heap
     old = scan_batch_side(before, f"v5_batch_{index}_before", client, host_url, token, **kwargs)
     new = scan_batch_side(after, f"v5_batch_{index}_after", client, host_url, token, **kwargs)
     return batch_rows([s["sample_id"] for s in batch], old, new)
@@ -69,7 +71,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--manifest", type=Path, default=ROOT / "data/v5_manifest.jsonl")
     parser.add_argument("--repos-dir", type=Path, default=ROOT / "data/repositories")
     parser.add_argument("--out", type=Path, default=ROOT / "data/sonar_v5.jsonl")
-    parser.add_argument("--batch-size", type=int, default=500)
+    parser.add_argument("--batch-size", type=int, default=250,
+                        help="PRs per scan (500 PRs = ~1,100 files stalled a 3 GB scanner here; 250 works)")
+    parser.add_argument("--scanner-heap", default="3g", help="scanner JVM max heap, e.g. 3g (empty = image default)")
     parser.add_argument("--splits", default="test,val,train", help="comma list, run in this order")
     parser.add_argument("--max-batches", type=int, help="stop after N batches (timing runs)")
     parser.add_argument("--sonar-url", default=os.getenv("SONAR_HOST_URL", "http://localhost:9000"))
@@ -95,6 +99,7 @@ def main(argv: list[str] | None = None) -> int:
     meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.is_file() else {"batches": []}
     client = SonarClient(args.sonar_url, token)
     meta.update(server_version=client.server_version(), scanner_image=SCANNER_IMAGE, batch_size=args.batch_size,
+                scanner_heap=args.scanner_heap,
                 scanner_args=list(BATCH_SCANNER_ARGS), metrics="sum over each PR's touched files; delta = after - before")
     print(f"{len(done)} PRs already done, {len(batches)} batches to run", file=sys.stderr)
 
@@ -102,7 +107,8 @@ def main(argv: list[str] | None = None) -> int:
         index = len(meta["batches"]) + 1
         started = time.monotonic()
         try:
-            rows = run_batch(index, batch, args.repos_dir, client, args.scanner_host_url, token)
+            rows = run_batch(index, batch, args.repos_dir, client, args.scanner_host_url, token,
+                             heap=args.scanner_heap or None)
         except (SonarError, OSError) as exc:
             print(f"batch {index} ({split}, {len(batch)} PRs) failed: {exc}", file=sys.stderr)
             meta["batches"].append({"index": index, "split": split, "prs": len(batch), "error": str(exc)[:300]})
