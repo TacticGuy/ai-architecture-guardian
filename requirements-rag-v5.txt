@@ -1,0 +1,7 @@
+# Install alongside requirements.txt. Model downloads for BERTScore need network access.
+bert-score>=0.3.13
+rouge-score>=0.1.2
+scipy>=1.11
+krippendorff>=0.8
+matplotlib>=3.8
+python-dotenv>=1.0
