@@ -5,7 +5,7 @@ from collections import Counter
 from typing import Any
 
 
-NODE_TYPES = ("module", "class", "function", "method", "external_module", "external_callable")
+NODE_TYPES = ("module", "class", "function", "method", "external_module", "external_callable", "global_variable")
 
 
 def create_node_features(graph: dict[str, Any]) -> dict[str, Any]:

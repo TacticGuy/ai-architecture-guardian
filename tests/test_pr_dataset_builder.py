@@ -7,7 +7,7 @@ import subprocess
 import pytest
 
 from src.dataset.builder import DatasetSampleExcluded, build_pr_sample
-from src.ml.hetero_data import load_hetero_data
+from src.ml.hetero_data import SCHEMA_VERSION, load_hetero_data
 
 
 def git(repository: Path, *arguments: str) -> str:
@@ -74,8 +74,8 @@ def test_builds_complete_positive_graph_pair_sample(tmp_path):
     assert metadata["changed_python_files"] == ["pkg/b.py"]
     assert metadata["metrics_path"] == "metrics.json"
     assert (sample / "diff.patch").is_file()
-    assert load_hetero_data(sample / "before/graph.pt").schema_version == 1
-    assert load_hetero_data(sample / "after/graph.pt").schema_version == 1
+    assert load_hetero_data(sample / "before/graph.pt").schema_version == SCHEMA_VERSION
+    assert load_hetero_data(sample / "after/graph.pt").schema_version == SCHEMA_VERSION
 
     label = json.loads((sample / "label.json").read_text(encoding="utf-8"))
     assert label["reason"] == "new_dependency_cycle"

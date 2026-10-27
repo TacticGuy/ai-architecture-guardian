@@ -16,9 +16,10 @@ from typing import Any
 import torch
 from torch_geometric.data import HeteroData
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2   # v2 adds shared module-level variables (``global_variable`` nodes, ACCESSES_GLOBAL edges)
 
-NODE_TYPES: tuple[str, ...] = ("module", "class", "function", "method", "external_module", "external_callable")
+NODE_TYPES: tuple[str, ...] = ("module", "class", "function", "method", "external_module", "external_callable",
+                               "global_variable")
 
 # Numeric columns of every node's ``x`` table, in this order. The ``node_type`` feature
 # from node_features.json is dropped: the store a node sits in already says its type.
@@ -45,6 +46,11 @@ EDGE_TYPES: tuple[tuple[str, str, str], ...] = (
     # INHERITS: a class's parents. Usually a class; other targets cover edge cases such
     # as ``class X(with_metaclass(Meta, Base))`` where the "parent" is a helper call.
     *(("class", "INHERITS", target) for target in _CALL_TARGETS),
+    # Shared global state: a module defines a variable; functions and methods read or write it.
+    ("module", "CONTAINS", "global_variable"),
+    # Any scope can use one: functions/methods read or write it; module or class bodies (and base
+    # classes) can call or inherit from a module-level object such as ``Base = declarative_base()``.
+    *((source, "ACCESSES_GLOBAL", "global_variable") for source in _SCOPES),
 )
 
 

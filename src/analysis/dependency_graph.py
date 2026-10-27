@@ -45,17 +45,30 @@ def build_dependency_graph(ast_data: dict[str, Any]) -> dict[str, Any]:
             target_id = f"external_callable:{external}"
             node_by_id.setdefault(target_id, {"id": target_id, "type": "external_callable", "name": external,
                                                "qualified_name": external, "parent_id": None})
-        edges.add((relation["source_id"], target_id, "CALLS"))
+        edges.add((relation["source_id"], target_id, _dependency_kind(node_by_id, target_id, "CALLS")))
     # INHERITS: class -> parent class, resolved with exactly the same rules as calls.
     # A parent outside the project shares the "external_callable" node used when that
     # class is called elsewhere (e.g. urllib3.PoolManager), so each outside thing is one node.
     for relation in ast_data.get("inherits", []):
+        # A function and a class can share one ID (e.g. ``def X`` and ``class X`` in the two
+        # branches of an ``if``); the node kept for that ID may then be the function, and
+        # "function INHERITS" is not a real relation, so it is skipped.
+        if node_by_id.get(relation["source_id"], {}).get("type") != "class":
+            continue
         target_id, external = _resolve_call(relation, names, qualified, modules, module_aliases)
         if target_id is None:
             target_id = f"external_callable:{external}"
             node_by_id.setdefault(target_id, {"id": target_id, "type": "external_callable", "name": external,
                                                "qualified_name": external, "parent_id": None})
-        edges.add((relation["source_id"], target_id, "INHERITS"))
+        edges.add((relation["source_id"], target_id, _dependency_kind(node_by_id, target_id, "INHERITS")))
+    # ACCESSES_GLOBAL: a function/method reads or writes a module-level variable. Only
+    # targets that are real ``global_variable`` nodes become edges; anything else (an
+    # imported function, a submodule) is already covered by CALLS or IMPORTS.
+    for relation in ast_data.get("global_accesses", []):
+        candidates = [node_id for node_id in qualified.get(relation["qualified_target"], set())
+                      if node_by_id[node_id]["type"] == "global_variable"]
+        if len(candidates) == 1:
+            edges.add((relation["source_id"], candidates[0], "ACCESSES_GLOBAL"))
     graph_edges = [{"source": source, "target": target, "type": edge_type}
                    for source, target, edge_type in sorted(edges)]
     nodes = [node_by_id[node_id] for node_id in sorted(node_by_id)]
@@ -63,6 +76,12 @@ def build_dependency_graph(ast_data: dict[str, Any]) -> dict[str, Any]:
             "ast_extracted_at": ast_data["extracted_at"], "nodes": nodes, "edges": graph_edges,
             "summary": {"node_count": len(nodes), "edge_count": len(graph_edges),
                         "parsed_file_count": len(ast_data["files"]), "parse_error_count": len(ast_data["parse_errors"])}}
+
+
+def _dependency_kind(node_by_id: dict[str, dict[str, Any]], target_id: str, kind: str) -> str:
+    """A call or base class that resolves to a module-level variable (``LOGGER.info()``,
+    ``Base = declarative_base()``) uses shared global state, so it is an ACCESSES_GLOBAL edge."""
+    return "ACCESSES_GLOBAL" if node_by_id[target_id]["type"] == "global_variable" else kind
 
 
 def _resolve_module(target: str, from_module: str | None, modules: dict[str, str]) -> str | None:
