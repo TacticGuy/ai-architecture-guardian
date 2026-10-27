@@ -97,16 +97,26 @@ def pylint_metrics(after: Files, sloc: int | None, python: str = sys.executable,
         return {f"pylint.{key}": None for key in keys}
     with tempfile.TemporaryDirectory() as folder:
         root = Path(folder)
+        package = root / "pr_files"
         for path, text in after.items():
-            target = root / "src" / path
+            target = package / path
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(text, encoding="utf-8")
+        # Only the touched files are copied, so their folders lack __init__.py. pylint would then put
+        # each folder on sys.path, and a touched module named like the standard library (aiohttp's
+        # abc.py doing `from abc import ABC`) imports itself and astroid's inference never ends.
+        # Making every folder a package (inside one wrapper package) keeps the stdlib reachable.
+        for directory in [package, *{p.parent for p in package.rglob("*.py")}]:
+            init = directory / "__init__.py"
+            if not init.exists():
+                init.write_text("", encoding="utf-8")
         (root / "empty.rc").write_text("", encoding="utf-8")
         try:
             result = subprocess.run(
                 [python, "-I", "-m", "pylint", "--rcfile", str(root / "empty.rc"), "--output-format=json2",
-                 "--disable=import-error,no-name-in-module", "--score=y", *sorted(after)],
-                cwd=root / "src", capture_output=True, timeout=timeout,
+                 "--disable=import-error,no-name-in-module", "--score=y",
+                 *(f"pr_files/{path}" for path in sorted(after))],
+                cwd=root, capture_output=True, timeout=timeout,
                 env={**os.environ, "PYTHONIOENCODING": "utf-8"})
         except subprocess.TimeoutExpired:
             return {f"pylint.{key}": None for key in keys}
