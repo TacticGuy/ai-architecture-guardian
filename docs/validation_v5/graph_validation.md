@@ -36,7 +36,10 @@ dataset.** This measures the extraction *method* on independent code, not the 6,
 | IMPORTS vs grimp, modules both tools scan | 100.0 | 100.0 | 100.0 |
 | Gold set: CALLS | 97.9 | 88.7 | 93.1 |
 | Gold set: INHERITS | 100.0 | 76.3 | 86.6 |
-| Gold set: ACCESSES_GLOBAL | 40.0 | 50.0 | 44.4 |
+| Gold set: ACCESSES_GLOBAL | 80.0 | 50.0 | 61.5 |
+
+The ACCESSES_GLOBAL row is after the fix for bug B2 (annotations). Before that fix it was
+40.0 / 50.0 / 44.4. No other number in this table changed with the fix.
 
 Repositories and tags for grimp: flask 3.1.3, click 8.5.0, requests v2.34.2, httpx 0.28.1,
 rich v15.0.0, attrs 26.1.0, starlette 1.10.0, black 26.10.1, marshmallow 4.3.1 and typer 0.27.3.
@@ -57,13 +60,16 @@ The commit of each is in `results.json`.
 * **INHERITS misses only builtin bases.** 8 of the 9 misses are `ValueError`, `OSError`,
   `Warning` and similar: builtin bases are dropped (B1). Every internal base and every
   non-builtin external base was found.
-* **ACCESSES_GLOBAL is the weakest relation**, and the sample is small (8 gold relations). 5 of
-  the 6 false positives are names used only in type annotations (B2). The misses come from
-  default argument values (B3) and module-level code (B7). Fixing B2 alone would lift precision
-  from 40% to 80%.
+* **ACCESSES_GLOBAL is the weakest relation**, and the sample is small (8 gold relations). In
+  the first run, 5 of the 6 false positives were names used only in type annotations (B2).
+  After the fix, all 5 are gone and precision went from 40% to 80%, with nothing else changed.
+  The one remaining false positive is a default argument read charged to the method instead
+  of the class body (B3). The misses come from default argument values (B3) and module-level
+  code (B7).
 
-Nine extraction bugs, each with a minimal example, are in `bugs_found.md`. They are reported
+Nine extraction bugs, each with a minimal example, are in `bugs_found.md`. They were reported
 to the graph-builder owner, not fixed here, so that the dataset and the code stay consistent.
+B2 has since been fixed in the graph builder, and the tables above were re-run after that fix.
 
 ## Limitations
 

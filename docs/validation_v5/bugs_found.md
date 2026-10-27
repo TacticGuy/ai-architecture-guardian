@@ -6,7 +6,9 @@ so the dataset and the code stay consistent.
 
 Each example is a single file `pkg/m.py` (next to an empty `pkg/__init__.py`), run through
 `extract_repository_ast` and `build_dependency_graph` on branch `update/dashboard` at
-`b95ca14`. "Got" is the actual output and "expected" is the correct relation.
+`b95ca14`. "Got" is the actual output and "expected" is the correct relation. All examples
+were re-run on 2026-10-28, after the B2 fix: B2 is fixed, and the other eight behave as
+described.
 
 Severity is the effect on what the model sees. **High** means wrong edges in common code.
 **Medium** means edges missing in common code. **Low** means rare code or an attribution
@@ -24,7 +26,11 @@ Non-builtin external bases are kept (`collections.abc.MutableMapping`,
 missed INHERITS edges (`requests/exceptions.py`, `starlette/config.py`). Exception
 hierarchies lose their link to `Exception`/`ValueError`/`OSError`/`Warning`.
 
-## B2. Type annotations count as global accesses (ACCESSES_GLOBAL, high)
+## B2. Type annotations count as global accesses (ACCESSES_GLOBAL, high). FIXED
+
+**Status:** fixed on `update/dashboard`. Re-checked on 2026-10-28: the example below now gives
+no edge. In the gold set, all 5 annotation false positives are gone (ACCESSES_GLOBAL precision
+went from 40% to 80%), and no other edge changed.
 
 ```python
 from __future__ import annotations
