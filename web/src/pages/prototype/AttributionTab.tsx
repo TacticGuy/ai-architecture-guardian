@@ -14,8 +14,9 @@ interface AttributionSummary {
   predicted_degrading: boolean; label: number | null; split: string; has_explanation: boolean;
 }
 interface Edge {
-  source: string; source_type: string; source_module: string; relation: string; target: string;
-  target_type: string; target_module: string; attribution: number; added_in_pr: boolean;
+  // The module is null for external_callable / external_module nodes (code outside the project).
+  source: string; source_type: string; source_module: string | null; relation: string; target: string;
+  target_type: string; target_module: string | null; attribution: number; added_in_pr: boolean;
   touched_source: boolean; touched_target: boolean;
 }
 interface ModuleEvidence { ca_before: number; ce_before: number; ca_after: number; ce_after: number; in_import_cycle: boolean }
@@ -61,6 +62,8 @@ const prUrl = (sampleId: string) => {
   return match ? `https://github.com/${match[1]}/${match[2]}/pull/${match[3]}` : undefined;
 };
 const signed = (value: number, digits = 2) => `${value > 0 ? "+" : ""}${value.toFixed(digits)}`;
+/** Two decimals, but small non-zero values keep two significant digits (0.00048, not 0.00). */
+const small = (value: number) => (value === 0 ? "0" : Math.abs(value) < 0.01 ? value.toPrecision(2) : value.toFixed(2));
 
 /* ------------------------------------------------------------------ page */
 
@@ -103,7 +106,7 @@ export default function AttributionTab() {
   if (!rows.length) {
     return (
       <Notice>
-        No attribution files yet. They are read from <code className="font-mono">data/xai_v5/</code> (one{" "}
+        No attribution files yet. They are read from <code className="font-mono">data/xai/v5/</code> (one{" "}
         <code className="font-mono">&lt;owner&gt;__&lt;repo&gt;__&lt;number&gt;.json</code> per PR).
       </Notice>
     );
@@ -213,9 +216,12 @@ function Detail({ data }: { data: Attribution }) {
 
       <Panel title="Module coupling" caption="Afferent (Ca, modules that depend on it) and efferent (Ce, modules it depends on) coupling, before → after the PR.">
         <ModuleTable evidence={data.module_evidence} newCycle={data.new_cycle_modules} />
-        {Object.keys(data.structural_delta ?? {}).length > 0 && (
+        {data.structural_delta && (
           <p className="mt-3 text-xs text-muted-foreground">
-            Whole-graph change: {Object.entries(data.structural_delta).map(([key, value]) => `${key.replaceAll("_", " ")} ${signed(value, Math.abs(value) < 0.01 ? 4 : 2)}`).join(" · ")}
+            Whole-graph change:{" "}
+            {Object.entries(data.structural_delta).filter(([, value]) => value !== 0)
+              .map(([key, value]) => `${key.replaceAll("_", " ")} ${value > 0 ? "+" : ""}${small(value)}`).join(" · ")
+              || "no change to the graph-level metrics"}
           </p>
         )}
       </Panel>
@@ -229,7 +235,7 @@ function Detail({ data }: { data: Attribution }) {
       </Panel>
 
       <p className="text-xs text-muted-foreground">
-        explainer: {data.explainer} · unfaithfulness {data.unfaithfulness.toFixed(2)} (lower is better)
+        explainer: {data.explainer} · unfaithfulness {small(data.unfaithfulness)} (lower is better)
       </p>
     </>
   );
@@ -373,6 +379,8 @@ const NODE_COLOURS: Record<string, string> = {
 };
 const OTHER_NODE = "#8a8a8a";
 const nodeColour = (type: string) => NODE_COLOURS[type] ?? OTHER_NODE;
+const EXTERNAL_GROUP = "external (outside the project)";
+const isExternal = (type: string) => type.startsWith("external");
 
 const escapeHtml = (text: string) =>
   text.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
@@ -411,10 +419,10 @@ function AttributionGraph({ edges }: { edges: Edge[] }) {
   const data = useMemo(() => {
     const nodes = new Map<string, GraphNode>();
     for (const edge of edges) {
-      nodes.set(edge.source, { id: edge.source, type: edge.source_type, module: edge.source_module, name: shortName(edge.source),
-        touched: edge.touched_source });
-      nodes.set(edge.target, { id: edge.target, type: edge.target_type, module: edge.target_module, name: shortName(edge.target),
-        touched: edge.touched_target });
+      nodes.set(edge.source, { id: edge.source, type: edge.source_type, module: edge.source_module ?? EXTERNAL_GROUP,
+        name: shortName(edge.source), touched: edge.touched_source });
+      nodes.set(edge.target, { id: edge.target, type: edge.target_type, module: edge.target_module ?? EXTERNAL_GROUP,
+        name: shortName(edge.target), touched: edge.touched_target });
     }
     const links: GraphLink[] = edges.map((edge) => ({ source: edge.source, target: edge.target, relation: edge.relation,
       attribution: edge.attribution, added_in_pr: edge.added_in_pr }));
@@ -458,6 +466,9 @@ function AttributionGraph({ edges }: { edges: Edge[] }) {
             <span className="size-2.5 rounded-full" style={{ backgroundColor: colour }} />{type.replace("_", " ")}
           </span>
         ))}
+        <span className="inline-flex items-center gap-1.5">
+          <span className="size-2 rounded-full" style={{ backgroundColor: OTHER_NODE }} />external (hover for name)
+        </span>
       </div>
       <div className="mb-3 flex flex-wrap gap-x-5 gap-y-1 text-xs text-muted-foreground">
         <span className="inline-flex items-center gap-1.5"><span className="h-0.5 w-5 rounded bg-risky" />pushes risk up</span>
@@ -510,7 +521,8 @@ function AttributionGraph({ edges }: { edges: Edge[] }) {
             }
           }}
           nodeCanvasObject={(node, ctx, scale) => {
-            const radius = node.type === "module" ? 7 : 5;
+            const external = isExternal(node.type);
+            const radius = node.type === "module" ? 7 : external ? 3.5 : 5;
             ctx.beginPath();
             ctx.arc(node.x ?? 0, node.y ?? 0, radius, 0, 2 * Math.PI);
             ctx.fillStyle = nodeColour(node.type);
@@ -520,7 +532,8 @@ function AttributionGraph({ edges }: { edges: Edge[] }) {
               ctx.strokeStyle = colours.ink;
               ctx.stroke();
             }
-            if (scale > 0.9) {
+            // External nodes are often many short names (append, get, ...): unlabelled, the tooltip names them.
+            if (scale > 0.9 && !external) {
               ctx.font = `${10 / scale}px Geist, sans-serif`;
               ctx.textAlign = "center";
               ctx.fillStyle = colours.ink;
