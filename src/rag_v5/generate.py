@@ -19,9 +19,12 @@ def _default_llm() -> Any:
             load_dotenv()
         except ImportError:
             pass
-    primary = GroqChat("openai/gpt-oss-120b", temperature=0)
+    json_options = {"reasoning_effort": "low", "response_format": {"type": "json_object"}}
+    primary = GroqChat("openai/gpt-oss-120b", temperature=0, max_tokens=1600,
+                       options=json_options)
     # Llama 3.3 70B was deprecated for free/developer plans in Aug 2026.
-    fallback = GroqChat("openai/gpt-oss-20b", temperature=0)
+    fallback = GroqChat("openai/gpt-oss-20b", temperature=0, max_tokens=1600,
+                        options=json_options)
     return FallbackChat(primary, fallback)
 
 

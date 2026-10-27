@@ -36,7 +36,9 @@ python scripts/rag_v5_explain.py --attribution data/xai_v5/OWNER__REPO__NUMBER.j
 Use `--mode text` for the title-and-diff BM25 baseline and `--mode none` for no retrieval.
 The primary Groq model is `openai/gpt-oss-120b`. The implementation uses
 `openai/gpt-oss-20b` as fallback because Groq deprecated `llama-3.3-70b-versatile` for
-free/developer plans in August 2026.
+free/developer plans in August 2026. Both use low reasoning effort, JSON-object mode, and
+a 1,600-token output allowance; the smaller original allowance could be consumed entirely
+by GPT-OSS reasoning without returning visible JSON.
 
 When real attribution files exist:
 
@@ -80,6 +82,9 @@ python scripts/rag_v5_survey.py --responses path/to/real_responses.csv
   references were intermittently locked inside the synchronized folder.
 - Python compilation succeeds for the package and all three scripts.
 - Evaluation packages install and import in the existing project environment.
+- Live Groq smoke verification passed on 27 October 2026 for both synthetic fixtures in
+  `signature`, `text`, and `none` modes: all six returned the expected verdict with zero
+  grounding violations. The synthetic outputs were kept outside the repository.
 - A full repository `pytest -q` attempt stalled in the command runner without output and was
   interrupted after the Python process disappeared. This is not reported as a passing full suite.
 - BERTScore will download the `roberta-large` model on the first real evaluation run, so that
