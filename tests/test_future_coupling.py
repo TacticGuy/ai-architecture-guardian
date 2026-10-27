@@ -167,3 +167,14 @@ def test_builder_writes_a_labelled_sample_and_skips_test_only_prs(history_repo, 
     assert json.loads((out / "o__r/1/metrics.json").read_text())["delta"]["internal_import_edge_count"] == 1
     with pytest.raises(SampleSkipped, match="no production Python change"):
         build_coupling_sample("o/r", prs[2], snapshots, out, cache, SETTINGS, horizon_months=6, threshold=0.5)
+
+
+def test_snapshotter_works_with_relative_paths(history_repo, tmp_path, monkeypatch):
+    """The build is usually run as ``--clones data/repositories`` (relative); the worktree must
+    still be created where the snapshotter later looks for it."""
+    from src.dataset.coupling_builder import Snapshotter
+    monkeypatch.chdir(tmp_path)
+    snapshots = Snapshotter(history_repo.relative_to(tmp_path), Path("wt_rel") / "o__r")
+    head = git(history_repo, "rev-parse", "HEAD").strip()
+    assert (snapshots.checkout(head) / "pkg" / "a.py").is_file()
+    assert (tmp_path / "wt_rel" / "o__r" / ".git").exists()

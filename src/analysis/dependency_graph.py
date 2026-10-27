@@ -8,7 +8,15 @@ from typing import Any
 def build_dependency_graph(ast_data: dict[str, Any]) -> dict[str, Any]:
     """Create symbol/import/call graph nodes and typed edges without executing source code."""
     symbols = [dict(symbol) for symbol in ast_data["symbols"]]
-    node_by_id = {node["id"]: node for node in symbols}
+    # One ID can name two definitions (``class X`` in one branch of an ``if`` and ``def X`` in
+    # the other; ``X = None`` then ``def X``). Keep one node per ID, preferring the kind that
+    # can own children and send every relation: class, then function/method, then a variable.
+    node_by_id: dict[str, dict[str, Any]] = {}
+    for node in symbols:
+        kept = node_by_id.get(node["id"])
+        if kept is None or _id_priority(node) <= _id_priority(kept):   # same kind: last one wins, as before
+            node_by_id[node["id"]] = node
+    symbols = list(node_by_id.values())
     module_ids: dict[str, list[str]] = defaultdict(list)
     for node in symbols:
         if node["type"] == "module":
@@ -76,6 +84,10 @@ def build_dependency_graph(ast_data: dict[str, Any]) -> dict[str, Any]:
             "ast_extracted_at": ast_data["extracted_at"], "nodes": nodes, "edges": graph_edges,
             "summary": {"node_count": len(nodes), "edge_count": len(graph_edges),
                         "parsed_file_count": len(ast_data["files"]), "parse_error_count": len(ast_data["parse_errors"])}}
+
+
+def _id_priority(node: dict[str, Any]) -> int:
+    return {"class": 0, "function": 1, "method": 1, "global_variable": 3}.get(node["type"], 2)
 
 
 def _dependency_kind(node_by_id: dict[str, dict[str, Any]], target_id: str, kind: str) -> str:

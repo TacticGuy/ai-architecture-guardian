@@ -92,10 +92,23 @@ def test_calls_and_base_classes_that_resolve_to_module_variables_are_global_acce
 def test_inherits_skipped_when_class_id_is_shadowed_by_function(tmp_path):
     """DRF defines ``class X(Base)`` and ``def X`` under one name; that must not create a
     "function INHERITS" edge, which the hetero schema rejects."""
-    source = ("import sys\nimport requests\n\nif sys.version_info >= (3, 9):\n    class Thing(requests.Session):\n        pass\n"
+    source = ("import sys\nimport requests\n\nif sys.version_info >= (3, 9):\n    class Thing(requests.Session):\n        def request(self):\n            return 1\n"
               "else:\n    def Thing():\n        return {}\n")
     graph = graph_of(tmp_path, {"compat.py": source})
     types = {node["id"]: node["type"] for node in graph["nodes"]}
     assert all(types[edge["source"]] == "class" for edge in graph["edges"] if edge["type"] == "INHERITS")
     from src.ml.hetero_data import build_hetero_data
     build_hetero_data(graph, create_node_features(graph))   # raised ValueError before the fix
+    assert types["compat.py:compat.Thing"] == "class"         # the class wins: its method names it as parent
+
+
+def test_variable_and_function_with_one_name_keep_the_function(tmp_path):
+    """``X = None`` followed by ``def X`` (seen in DRF) must give one function node, not a
+    variable node that "calls" things, which the hetero schema rejects."""
+    from src.ml.hetero_data import build_hetero_data
+    for index, source in enumerate(("import os\n\nhelper = None\n\ndef helper():\n    return os.getcwd()\n",
+                                    "import os\n\ndef helper():\n    return os.getcwd()\n\nhelper = None\n")):
+        graph = graph_of(tmp_path / str(index), {"m.py": source})
+        types = {node["id"]: node["type"] for node in graph["nodes"]}
+        assert types["m.py:m.helper"] == "function"
+        build_hetero_data(graph, create_node_features(graph))

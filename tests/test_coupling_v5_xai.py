@@ -25,9 +25,11 @@ from tests.test_future_coupling import SETTINGS, history_repo  # noqa: E402,F401
 @pytest.fixture
 def sample(history_repo, tmp_path):  # noqa: F811
     from src.dataset.coupling_builder import Snapshotter, build_coupling_sample
+    import subprocess
     clones = tmp_path / "clones"
     clones.mkdir()
-    (clones / "o__r").symlink_to(history_repo, target_is_directory=True)
+    # A real local clone (not a symlink, which Windows only allows with developer mode).
+    subprocess.run(["git", "clone", "-q", str(history_repo), str(clones / "o__r")], check=True)
     prs = {pr.number: pr for pr in merged_prs_from_history(history_repo)}
     out = tmp_path / "samples"
     build_coupling_sample("o/r", prs[1], Snapshotter(history_repo, tmp_path / "wt"), out, tmp_path / "cache",

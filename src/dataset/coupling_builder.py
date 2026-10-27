@@ -56,6 +56,10 @@ class Snapshotter:
     worktree: Path
 
     def __post_init__(self) -> None:
+        # Absolute paths: ``git -C <repository> worktree add <path>`` reads a relative path from
+        # inside the repository, so a relative one would put the worktree in the wrong place.
+        self.repository = Path(self.repository).resolve()
+        self.worktree = Path(self.worktree).resolve()
         if not (self.worktree / ".git").exists():
             self.worktree.parent.mkdir(parents=True, exist_ok=True)
             _git(self.repository, "-c", "core.longpaths=true", "worktree", "add", "--detach", "--force",
