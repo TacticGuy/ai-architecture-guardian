@@ -122,18 +122,10 @@ def build_coupling_sample(repo: str, pr: MergedPR, snapshots: Snapshotter, outpu
 
     sample_dir = output_root / repo.replace("/", "__") / str(pr.number)
     sample_dir.mkdir(parents=True, exist_ok=True)
-    data = attach_touched_masks(build_hetero_data(after_graph, after_features), files)
-    deltas = node_delta_features(before_graph, after_graph)
-    for node_type in data.node_types:
-        rows = [deltas[node_id] for node_id in data[node_type].node_ids]
-        data[node_type].delta = torch.tensor(rows, dtype=torch.float32).reshape(len(rows), len(DELTA_FEATURE_NAMES))
-    data.delta_feature_names = list(DELTA_FEATURE_NAMES)
-    save_hetero_data(data, sample_dir / "graph.pt")
+    write_graph_files(sample_dir, before_graph, before_features, after_graph, after_features, files)
     diff = _git(snapshots.repository, "diff", "--no-color", "--no-ext-diff", "--no-textconv", "--unified=3",
                 pr.before_sha, pr.merge_sha, "--", *files)
     (sample_dir / "diff.patch").write_text(diff, encoding="utf-8", newline="\n")
-    _write_json(sample_dir / "metrics.json",
-                compare_structural_metrics(before_graph, before_features, after_graph, after_features))
     _write_json(sample_dir / "label.json", label)
     metadata = {
         "schema_version": SCHEMA_VERSION, "label_protocol": "future_coupling_v1",
@@ -147,6 +139,50 @@ def build_coupling_sample(repo: str, pr: MergedPR, snapshots: Snapshotter, outpu
     }
     _write_json(sample_dir / "metadata.json", metadata)
     return metadata
+
+
+def write_graph_files(sample_dir: Path, before_graph: dict[str, Any], before_features: dict[str, Any],
+                      after_graph: dict[str, Any], after_features: dict[str, Any], files: list[str]) -> None:
+    """The model input (``graph.pt``: at-merge graph + touched mask + PR-change features) and the
+    structural metrics before/after (``metrics.json``)."""
+    data = attach_touched_masks(build_hetero_data(after_graph, after_features), files)
+    deltas = node_delta_features(before_graph, after_graph)
+    for node_type in data.node_types:
+        rows = [deltas[node_id] for node_id in data[node_type].node_ids]
+        data[node_type].delta = torch.tensor(rows, dtype=torch.float32).reshape(len(rows), len(DELTA_FEATURE_NAMES))
+    data.delta_feature_names = list(DELTA_FEATURE_NAMES)
+    save_hetero_data(data, sample_dir / "graph.pt")
+    _write_json(sample_dir / "metrics.json",
+                compare_structural_metrics(before_graph, before_features, after_graph, after_features))
+
+
+def rebuild_sample_graph(record: dict[str, Any], snapshots: Snapshotter, cache_dir: Path,
+                         settings: dict[str, Any], extractor: str) -> dict[str, Any]:
+    """Re-extract an existing sample's graphs with the current code, keeping its label.
+
+    The label is recomputed from the new at-merge graph and the (cached) future snapshot and
+    must equal the stored one; if it does not, nothing is written and the difference is
+    returned, so a code change can never silently change the dataset's labels.
+    """
+    sample_dir = Path(record["_dir"])
+    files = record["changed_python_files"]
+    before_graph, before_features = analyse(snapshots.checkout(record["before_commit_sha"]), settings)
+    after_graph, after_features = analyse(snapshots.checkout(record["merge_commit_sha"]), settings)
+    at_merge = coupling_summary(after_graph)
+    touched = touched_module_names(at_merge, files)
+    future = future_summary(snapshots, record["future_commit_sha"], cache_dir, settings)
+    label = future_coupling_label(at_merge, future, touched, float(json.loads(
+        (sample_dir / "label.json").read_text(encoding="utf-8"))["threshold"]))
+    stored = {"label": record["label"], "reason": record["label_reason"], "touched": sorted(record["touched_modules"])}
+    fresh = {"label": label["label"], "reason": label.get("reason"), "touched": sorted(touched)}
+    if fresh != stored:
+        return {"sample_id": record["sample_id"], "status": "label_changed", "stored": stored, "fresh": fresh}
+    write_graph_files(sample_dir, before_graph, before_features, after_graph, after_features, files)
+    metadata_path = sample_dir / "metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata.update({"extractor": extractor, "graph_rebuilt_at": datetime.now(timezone.utc).isoformat()})
+    _write_json(metadata_path, metadata)
+    return {"sample_id": record["sample_id"], "status": "rebuilt"}
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
