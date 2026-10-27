@@ -24,7 +24,7 @@ class HeteroRiskGNN(nn.Module):
 
     def __init__(self, metadata: tuple[list[str], list[tuple[str, str, str]]],
                  input_channels: int, hidden_channels: int = 32, layers: int = 2,
-                 dropout: float = 0.2, pooling_mode: str = "repo_plus_touched") -> None:
+                 dropout: float = 0.2, pooling_mode: str = "repo_plus_touched", history_dim: int = 0) -> None:
         super().__init__()
         if pooling_mode not in self.POOLING_MODES:
             raise ValueError(f"pooling_mode must be one of {sorted(self.POOLING_MODES)}")
@@ -33,6 +33,9 @@ class HeteroRiskGNN(nn.Module):
         self.dropout = dropout
         self.pooling_mode = pooling_mode
         self.embedding_dim = hidden_channels * (2 if pooling_mode == "repo_plus_touched" else 1)
+        # v5.1: optional per-PR history vector (``data.hist``, [graphs, history_dim]) joined to the
+        # graph embedding before the classifier. 0 keeps the earlier architecture exactly.
+        self.history_dim = history_dim
         self.input_projection = nn.ModuleDict({
             node_type: nn.Linear(input_channels, hidden_channels) for node_type in node_types
         })
@@ -44,7 +47,7 @@ class HeteroRiskGNN(nn.Module):
             for _ in range(layers)
         ])
         self.classifier = nn.Sequential(
-            nn.Linear(self.embedding_dim, hidden_channels),
+            nn.Linear(self.embedding_dim + history_dim, hidden_channels),
             nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(hidden_channels, 1),
@@ -96,7 +99,10 @@ class HeteroRiskGNN(nn.Module):
         return torch.cat([repository_embedding, local_embedding], dim=1)
 
     def forward(self, data: Any) -> torch.Tensor:
-        return self.classifier(self.encode(data)).squeeze(-1)
+        embedding = self.encode(data)
+        if self.history_dim:
+            embedding = torch.cat([embedding, data.hist.view(embedding.shape[0], self.history_dim)], dim=1)
+        return self.classifier(embedding).squeeze(-1)
 
 
 def _masked_mean_pool(embeddings: torch.Tensor, batches: torch.Tensor, mask: torch.Tensor,
@@ -184,8 +190,26 @@ def binary_metrics(labels: Sequence[int], probabilities: Sequence[float],
         seen += len(group)
         if positives:
             average_precision += (hits / seen) * (new_hits / positives)
+    # ROC-AUC = chance that a random degrading PR scores above a random safe one (ties count half).
+    negatives = len(labels) - positives
+    roc_auc = 0.0
+    if positives and negatives:
+        below = 0
+        for probability in sorted(groups):
+            group = groups[probability]
+            new_hits = sum(group)
+            roc_auc += new_hits * (below + 0.5 * (len(group) - new_hits))
+            below += len(group) - new_hits
+        roc_auc /= positives * negatives
+    # Review-budget view: precision among the 20% highest-scored PRs (input order breaks ties,
+    # never the true label). Chance level = the share of degrading PRs.
+    budget = max(1, -(-len(labels) * 20 // 100)) if labels else 0
+    ranked = sorted(range(len(labels)), key=lambda index: -float(probabilities[index]))[:budget]
     return {
         "count": len(labels), "positives": positives, "threshold": threshold,
         "true_positive": tp, "false_positive": fp, "true_negative": tn, "false_negative": fn,
         "precision": precision, "recall": recall, "f1": f1, "pr_auc_average_precision": average_precision,
+        "accuracy": (tp + tn) / len(labels) if labels else 0.0, "roc_auc": roc_auc,
+        "precision_at_top_20pct": (sum(labels[index] for index in ranked) / budget) if budget else 0.0,
+        "share_degrading": positives / len(labels) if labels else 0.0, "flagged_share": (tp + fp) / len(labels) if labels else 0.0,
     }

@@ -16,6 +16,7 @@ from typing import Any
 import torch
 from torch_geometric.data import HeteroData
 
+from src.dataset.history_features import HISTORY_FEATURE_NAMES
 from src.ml.hetero_data import TENSOR_FEATURE_NAMES, load_hetero_data
 
 DELTA_FEATURE_NAMES = ("is_new_in_pr", "dependency_edges_gained", "dependency_edges_lost")
@@ -92,6 +93,10 @@ def load_coupling_graph(record: dict[str, Any], hops: int = 3) -> HeteroData:
         store.x = torch.cat([store.x, store.delta], dim=1)
         del store.delta
         store.node_ids = [node_ids[node_type][int(index)] for index in subset[node_type]]
+    history = Path(record["_dir"]) / "history.json"
+    if history.is_file():                      # v5.1 pre-merge history features (graph level)
+        values = json.loads(history.read_text(encoding="utf-8"))["features"]
+        sub.hist = torch.tensor([[float(values[name]) for name in HISTORY_FEATURE_NAMES]], dtype=torch.float32)
     sub.y = torch.tensor([float(record["label"])], dtype=torch.float32)
     sub.sample_id = record["sample_id"]
     return sub
@@ -133,3 +138,13 @@ def load_packed_graphs(path: str | Path) -> list[HeteroData]:
     if payload.get("format") != "coupling_v5_packed/1" or list(payload["input_features"]) != list(INPUT_FEATURE_NAMES):
         raise ValueError(f"{path} is not a packed v5 graph file for the current feature set")
     return payload["graphs"]
+
+
+def fit_history_scaler(graphs: list[HeteroData]) -> tuple[torch.Tensor, torch.Tensor]:
+    matrix = torch.cat([graph.hist for graph in graphs], dim=0)
+    return matrix.mean(dim=0), matrix.std(dim=0, unbiased=False).clamp_min(1e-6)
+
+
+def apply_history_scaler(graph: HeteroData, mean: torch.Tensor, std: torch.Tensor) -> HeteroData:
+    graph.hist = (graph.hist - mean) / std
+    return graph

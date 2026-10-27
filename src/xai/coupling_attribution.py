@@ -38,11 +38,12 @@ class GraphView:
     explainers can feed modified node features and edge sets without copying HeteroData."""
 
     def __init__(self, x_dict: dict[str, torch.Tensor], edge_index_dict: dict[EdgeType, torch.Tensor],
-                 touched: dict[str, torch.Tensor]) -> None:
+                 touched: dict[str, torch.Tensor], hist: torch.Tensor | None = None) -> None:
         self._stores = {node_type: SimpleNamespace(x=x, touched_mask=touched[node_type])
                         for node_type, x in x_dict.items()}
         self.edge_index_dict = edge_index_dict
         self.num_graphs = 1
+        self.hist = hist
 
     def __getitem__(self, node_type: str) -> SimpleNamespace:
         return self._stores[node_type]
@@ -51,12 +52,13 @@ class GraphView:
 class LogitModel(torch.nn.Module):
     """``model(x_dict, edge_index_dict, touched=...)`` -> logit of shape [1] (PyG Explainer API)."""
 
-    def __init__(self, gnn: torch.nn.Module) -> None:
+    def __init__(self, gnn: torch.nn.Module, hist: torch.Tensor | None = None) -> None:
         super().__init__()
         self.gnn = gnn
+        self.hist = hist          # v5.1 history vector of the PR being explained (held fixed)
 
     def forward(self, x_dict, edge_index_dict, touched=None):  # noqa: D401
-        return self.gnn(GraphView(x_dict, edge_index_dict, touched)).view(-1)
+        return self.gnn(GraphView(x_dict, edge_index_dict, touched, self.hist)).view(-1)
 
 
 def graph_inputs(graph) -> tuple[dict[str, torch.Tensor], dict[EdgeType, torch.Tensor], dict[str, torch.Tensor]]:
@@ -259,3 +261,31 @@ def parse_hunks(diff: str, max_lines: int = 12) -> list[dict[str, Any]]:
             if len(current["snippet"]) < max_lines:
                 current["snippet"].append(line)
     return hunks
+
+
+def structure_history_split(model: LogitModel, graph) -> dict[str, float]:
+    """Split the logit into base + structure + history (exact two-player Shapley values).
+
+    "Neutral" structure = every node feature at the training average (0 after scaling);
+    "neutral" history = the training-average history vector (0 after scaling). With no history
+    input, history is 0 and structure = logit - base.
+    """
+    x, edges, touched = graph_inputs(graph)
+    zeros = {node_type: torch.zeros_like(value) for node_type, value in x.items()}
+    real_history = model.hist
+
+    def score(nodes, history):
+        model.hist = history
+        try:
+            with torch.no_grad():
+                return float(logit_with_masks(model, nodes, edges, touched, None))
+        finally:
+            model.hist = real_history
+
+    if real_history is None:
+        base, full = score(zeros, None), score(x, None)
+        return {"base": base, "structure_gnn": full - base, "history": 0.0, "logit": full}
+    neutral = torch.zeros_like(real_history)
+    f00, f10, f01, f11 = score(zeros, neutral), score(x, neutral), score(zeros, real_history), score(x, real_history)
+    return {"base": f00, "structure_gnn": 0.5 * ((f10 - f00) + (f11 - f01)),
+            "history": 0.5 * ((f01 - f00) + (f11 - f10)), "logit": f11}

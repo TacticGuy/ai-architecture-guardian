@@ -220,8 +220,18 @@ class _SymbolVisitor(ast.NodeVisitor):
         parameters |= {arg.arg for arg in (arguments.vararg, arguments.kwarg) if arg is not None}
         assigned = {child.id for child in ast.walk(function)
                     if isinstance(child, ast.Name) and isinstance(child.ctx, (ast.Store, ast.Del))} - declared
+        # Type annotations (``x: Alias``, ``-> Alias``, ``y: Alias = ...``) only name a type; they do
+        # not read or write shared state, so names inside them are not global accesses.
+        annotations = [arg.annotation for arg in (*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs,
+                                                  arguments.vararg, arguments.kwarg) if arg is not None]
+        annotations.append(function.returns)
+        annotations.extend(child.annotation for child in ast.walk(function) if isinstance(child, ast.AnnAssign))
+        annotation_nodes = {id(node) for annotation in annotations if annotation is not None
+                            for node in ast.walk(annotation)}
         targets: set[str] = set()
         for child in ast.walk(function):
+            if id(child) in annotation_nodes:
+                continue
             if isinstance(child, ast.Name):
                 name = child.id
                 if name in declared:

@@ -112,3 +112,15 @@ def test_variable_and_function_with_one_name_keep_the_function(tmp_path):
         types = {node["id"]: node["type"] for node in graph["nodes"]}
         assert types["m.py:m.helper"] == "function"
         build_hetero_data(graph, create_node_features(graph))
+
+
+def test_type_annotations_are_not_global_accesses(tmp_path):
+    """Praveen's validation bug B2: ``def f(x: Alias) -> Alias`` and ``y: Alias = ...`` name a type;
+    they do not read or write shared state. A real read of the same variable still counts."""
+    graph = graph_of(tmp_path, {"shapes.py": "Alias = dict\nLIMIT = 3\n\n"
+                                            "def annotated(x: Alias) -> Alias:\n    y: Alias = {}\n    return y\n\n"
+                                            "def real_read():\n    return Alias(limit=LIMIT)\n"})
+    found = accesses(graph)
+    assert ("shapes.annotated", "shapes.Alias") not in found
+    assert ("shapes.real_read", "shapes.Alias") in found
+    assert ("shapes.real_read", "shapes.LIMIT") in found

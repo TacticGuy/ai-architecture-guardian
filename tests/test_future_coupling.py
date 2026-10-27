@@ -178,3 +178,24 @@ def test_snapshotter_works_with_relative_paths(history_repo, tmp_path, monkeypat
     head = git(history_repo, "rev-parse", "HEAD").strip()
     assert (snapshots.checkout(head) / "pkg" / "a.py").is_file()
     assert (tmp_path / "wt_rel" / "o__r" / ".git").exists()
+
+
+def test_rebuild_keeps_the_label_and_refreshes_the_graph(history_repo, tmp_path):
+    pytest.importorskip("torch_geometric")
+    from src.dataset.coupling_builder import Snapshotter, build_coupling_sample, rebuild_sample_graph
+    from src.ml.coupling_data import discover_coupling_samples
+    prs = {pr.number: pr for pr in merged_prs_from_history(history_repo)}
+    snapshots = Snapshotter(history_repo, tmp_path / "wt")
+    out, cache = tmp_path / "samples", tmp_path / "cache"
+    build_coupling_sample("o/r", prs[1], snapshots, out, cache, SETTINGS, horizon_months=6, threshold=0.5)
+    [record] = discover_coupling_samples(out)
+    graph_file = out / "o__r/1/graph.pt"
+    graph_file.write_bytes(b"stale")
+    result = rebuild_sample_graph(record, snapshots, cache, SETTINGS, "test-extractor")
+    assert result["status"] == "rebuilt" and graph_file.read_bytes() != b"stale"
+    assert json.loads((out / "o__r/1/metadata.json").read_text())["extractor"] == "test-extractor"
+    # A stored label that disagrees with the code is reported and nothing is written.
+    tampered = dict(record, label=0, label_reason="no_degradation")
+    graph_file.write_bytes(b"stale")
+    result = rebuild_sample_graph(tampered, snapshots, cache, SETTINGS, "test-extractor")
+    assert result["status"] == "label_changed" and graph_file.read_bytes() == b"stale"

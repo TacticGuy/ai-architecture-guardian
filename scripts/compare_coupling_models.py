@@ -34,7 +34,8 @@ from scipy.sparse import hstack, csr_matrix  # noqa: E402
 
 from src.ml.coupling_data import discover_coupling_samples  # noqa: E402
 from src.ml.coupling_features import (  # noqa: E402
-    change_size_features, diff_tokens, read_sample, shortcut_features, structural_metric_features,
+    change_size_features, diff_tokens, history_feature_table, read_sample, shortcut_features,
+    structural_metric_features,
 )
 from src.ml.hetero_gnn import binary_metrics  # noqa: E402
 
@@ -89,6 +90,16 @@ def main(argv: list[str] | None = None) -> int:
         "cycles (logistic regression)", linear(), combine(structure, size))
     fit("structural_metrics_gb", "Same graph + size metrics (gradient boosting)",
         GradientBoostingClassifier(random_state=0), combine(structure, size))
+
+    if all(samples[i]["history"] is not None for s in SPLITS for i in ids[s]):
+        # v5.1: the same pre-merge history the GNN gets, so the comparison stays fair.
+        history = table(history_feature_table)
+        fit("history_lr", "Pre-merge history: coupling momentum + change activity (logistic regression)", linear(), history)
+        fit("history_gb", "Pre-merge history (gradient boosting)", GradientBoostingClassifier(random_state=0), history)
+        fit("structure_history_gb", "Graph metrics + change size + pre-merge history (gradient boosting)",
+            GradientBoostingClassifier(random_state=0), combine(structure, size, history))
+    else:
+        print("history.json missing for some samples: history baselines skipped")
 
     vectorizer = TfidfVectorizer(token_pattern=r"\S+", min_df=3, max_features=20000, sublinear_tf=True)
     vectorizer.fit([diff_tokens(samples[i]) for i in ids["train"]])
@@ -272,24 +283,29 @@ def _tool_features(path: Path, ids) -> tuple[dict[str, dict[str, np.ndarray]], d
 
 
 def _markdown(results: dict) -> str:
-    lines = ["| Model | Test F1 (95% range) | Test PR-AUC (95% range) | Precision | Recall |", "|---|---|---|---|---|"]
+    lines = ["| Model | Test PR-AUC (95% range) | ROC-AUC | Precision in top 20% | Accuracy | F1 (95% range) | Precision | Recall | Flags |",
+             "|---|---|---|---|---|---|---|---|---|"]
     order = sorted(results["models"].items(), key=lambda item: -item[1]["test"]["pr_auc_average_precision"])
     for name, entry in order:
         test = entry["test"]
-        lines.append(f"| {name} | {test['f1']:.3f} ({entry['test_f1_95'][0]:.2f}-{entry['test_f1_95'][1]:.2f}) | "
-                     f"{test['pr_auc_average_precision']:.3f} ({entry['test_pr_auc_95'][0]:.2f}-{entry['test_pr_auc_95'][1]:.2f}) | "
-                     f"{test['precision']:.3f} | {test['recall']:.3f} |")
+        lines.append(f"| {name} | {test['pr_auc_average_precision']:.3f} ({entry['test_pr_auc_95'][0]:.2f}-{entry['test_pr_auc_95'][1]:.2f}) | "
+                     f"{test['roc_auc']:.3f} | {test['precision_at_top_20pct']:.3f} | {test['accuracy']:.3f} | "
+                     f"{test['f1']:.3f} ({entry['test_f1_95'][0]:.2f}-{entry['test_f1_95'][1]:.2f}) | "
+                     f"{test['precision']:.3f} | {test['recall']:.3f} | {test['flagged_share']:.0%} |")
     for name, entry in results.get("test_subset_comparisons", {}).items():
         gnn = entry.get("gnn_same_prs")
-        lines.append(f"| {name} (on {entry['test_prs']} test PRs) | {entry['rule']['f1']:.3f} | "
-                     f"{entry['rule']['pr_auc_average_precision']:.3f} | {entry['rule']['precision']:.3f} | "
-                     f"{entry['rule']['recall']:.3f} |")
-        if gnn:
-            lines.append(f"| gnn (same {entry['test_prs']} PRs) | {gnn['f1']:.3f} | {gnn['pr_auc_average_precision']:.3f} | "
-                         f"{gnn['precision']:.3f} | {gnn['recall']:.3f} |")
+        for label, metrics in ((f"{name} (on {entry['test_prs']} test PRs)", entry["rule"]),
+                               (f"gnn (same {entry['test_prs']} PRs)", gnn)):
+            if metrics:
+                lines.append(f"| {label} | {metrics['pr_auc_average_precision']:.3f} | {metrics['roc_auc']:.3f} | "
+                             f"{metrics['precision_at_top_20pct']:.3f} | {metrics['accuracy']:.3f} | {metrics['f1']:.3f} | "
+                             f"{metrics['precision']:.3f} | {metrics['recall']:.3f} | {metrics['flagged_share']:.0%} |")
     counts = results["counts"]
     lines.append("")
     lines.append("PRs: " + ", ".join(f"{s} {counts[s]['prs']} ({counts[s]['degrading']} degrading)" for s in SPLITS))
+    share = counts["test"]["degrading"] / max(counts["test"]["prs"], 1)
+    lines.append(f"Chance level on test: PR-AUC and precision in top 20% = {share:.3f}, ROC-AUC = 0.500. "
+                 "Accuracy and F1 depend on the threshold (chosen on validation); 'Flags' is the share of test PRs called degrading.")
     return "\n".join(lines) + "\n"
 
 

@@ -123,7 +123,8 @@ def test_explain_script_writes_the_contract_file(sample, tmp_path):
     payload = json.loads((out / file_name(record["sample_id"])).read_text())
     assert payload["schema"] == SCHEMA and payload["sample_id"] == "o/r#1" and payload["split"] == "test"
     layer = payload["layer_a"]
-    assert layer["base"] + layer["structure_gnn"] + layer["diff"] == pytest.approx(payload["logit"], abs=1e-5)
+    assert layer["base"] + layer["structure_gnn"] + layer["history"] + layer["diff"] == pytest.approx(
+        payload["logit"], abs=1e-5)
     assert 0 < len(payload["top_edges"]) <= 30
     assert [abs(e["attribution"]) for e in payload["top_edges"]] == sorted(
         (abs(e["attribution"]) for e in payload["top_edges"]), reverse=True)
@@ -152,3 +153,51 @@ def test_pack_for_kaggle_writes_every_upload_file(sample, tmp_path):
     names = zipfile.ZipFile(out / "code.zip").namelist()
     assert "scripts/train_coupling_gnn.py" in names and "src/ml/coupling_data.py" in names
     assert not any("__pycache__" in name for name in names)
+
+
+def test_history_features_feed_the_model_and_the_explanation(sample, tmp_path):
+    from scripts.explain_coupling_v5 import explain_sample, file_name
+    from src.dataset.history_features import HISTORY_FEATURE_NAMES
+    from src.ml.coupling_data import apply_history_scaler, fit_history_scaler
+    from src.xai.coupling_attribution import structure_history_split
+    record = sample["record"]
+    values = {name: float(index + 1) for index, name in enumerate(HISTORY_FEATURE_NAMES)}
+    (Path(record["_dir"]) / "history.json").write_text(json.dumps({"features": values}), encoding="utf-8")
+    graph, mean, std = scaled_graph(record)
+    assert graph.hist.shape == (1, len(HISTORY_FEATURE_NAMES))
+    history_mean, history_std = fit_history_scaler([graph])
+    torch.manual_seed(5)
+    gnn = HeteroRiskGNN(graph.metadata(), len(INPUT_FEATURE_NAMES), 16, layers=2, pooling_mode="touched_1hop",
+                        history_dim=len(HISTORY_FEATURE_NAMES)).eval()
+    for parameter in gnn.parameters():
+        parameter.requires_grad_(False)
+    model = LogitModel(gnn, apply_history_scaler(graph.clone(), history_mean, history_std).hist).eval()
+    parts = structure_history_split(model, graph)
+    assert parts["base"] + parts["structure_gnn"] + parts["history"] == pytest.approx(parts["logit"], abs=1e-5)
+    checkpoint = tmp_path / "model_history.pt"
+    torch.save({"model_state_dict": gnn.state_dict(), "metadata": graph.metadata(),
+                "feature_names": list(INPUT_FEATURE_NAMES), "feature_mean": mean, "feature_std": std,
+                "hidden_channels": 16, "layers": 2, "pooling_mode": "touched_1hop", "threshold": 0.5, "seed": 5,
+                "dropout": 0.2, "history_dim": len(HISTORY_FEATURE_NAMES),
+                "history_feature_names": list(HISTORY_FEATURE_NAMES), "history_mean": history_mean,
+                "history_std": history_std}, checkpoint)
+    out = tmp_path / "xai_history"
+    assert explain_sample(record, "test", str(checkpoint), str(sample["clones"]), str(out), SETTINGS, 8, 0)[
+        "status"] == "written"
+    payload = json.loads((out / file_name(record["sample_id"])).read_text())
+    layer = payload["layer_a"]
+    assert sum(layer.values()) == pytest.approx(payload["logit"], abs=1e-5)
+    assert payload["history_features"]["past_excess_growth"] == values["past_excess_growth"]
+
+
+def test_ranking_metrics_roc_auc_and_top_20_percent_precision():
+    from src.ml.hetero_gnn import binary_metrics
+    labels = [1, 0, 1, 0, 0, 0, 0, 0, 1, 0]
+    scores = [0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0.1]
+    metrics = binary_metrics(labels, scores, 0.65)
+    # Positives at 0.9, 0.7, 0.1; negatives at 0.8 .. 0.1. Pairs won: 7 + 6 + 0.5 (tie) = 13.5 of 21.
+    # Threshold 0.65 flags 0.9, 0.8, 0.7: 2 right + 6 correct "safe" = 8 of 10 correct.
+    assert metrics["roc_auc"] == pytest.approx(13.5 / 21)
+    assert metrics["precision_at_top_20pct"] == pytest.approx(0.5)     # top 2: 0.9 (risky), 0.8 (safe)
+    assert metrics["accuracy"] == pytest.approx(0.8) and metrics["flagged_share"] == pytest.approx(0.3)
+    assert binary_metrics([1, 0], [0.5, 0.5])["roc_auc"] == pytest.approx(0.5)
