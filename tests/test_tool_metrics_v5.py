@@ -12,7 +12,8 @@ import pytest
 
 from src.validation_v5.manifest_dev import is_production_python, module_name, pr_number
 from src.validation_v5.sonar import (
-    SonarClient, SonarError, project_key, scan_side, select_sonar_samples, sonar_metrics,
+    SonarClient, SonarError, batch_rows, pr_folder, project_key, scan_batch_side, scan_side, select_sonar_samples,
+    sonar_metrics, task_id_from_output,
 )
 from src.validation_v5.tool_metrics import (
     change_frequency, compact, done, hotspot_metrics, load_rows, parse_pylint, pylint_metrics,
@@ -63,6 +64,16 @@ def test_pylint_on_a_tiny_file():
     assert row["pylint.design"] == 2  # R0913 too-many-arguments and R0917 too-many-positional-arguments
     assert row["pylint.error"] == 0 and row["pylint.score"] is not None
     assert pylint_metrics({}, None)["pylint.score"] is None
+
+
+@pytest.mark.skipif(importlib.util.find_spec("pylint") is None, reason="pylint not installed")
+def test_pylint_on_a_module_named_like_the_stdlib_finishes():
+    # aiohttp#10038: a touched pkg/abc.py doing `from abc import ABC` used to make pylint import
+    # itself and hang until the timeout (null row).
+    code = '"""Doc."""\nfrom abc import ABC, abstractmethod\n\n\nclass Base(ABC):\n    """Doc."""\n\n' \
+           '    @abstractmethod\n    def run(self):\n        """Doc."""\n'
+    row = pylint_metrics({"pkg/abc.py": code}, sloc=8, timeout=60)
+    assert row["pylint.score"] is not None
 
 
 def git(repo: Path, *arguments: str, date: str | None = None) -> str:
@@ -162,12 +173,105 @@ def test_sonar_side_without_files_is_zero_and_not_scanned():
     assert measures["code_smells"] == 0 and measures["duplicated_lines_density"] is None
 
 
+def test_project_is_deleted_even_when_the_scan_fails():
+    fake = FakeSonar({})
+
+    def scanner(*args):
+        raise SonarError("scanner broke")
+
+    with pytest.raises(SonarError):
+        scan_side({"a.py": "x = 1\n"}, "v5_k_before", fake_client(fake), "h", "t", scanner)
+    assert fake.deleted == ["project=v5_k_before"]
+
+
+def test_task_id_is_read_from_the_scanner_log():
+    log = ("19:07:49.744 INFO  More about the report processing at "
+           "http://host.docker.internal:9000/api/ce/task?id=2536e0bc-2daf-4a78-893b-0c89d7a0e639\n"
+           "19:07:49.877 INFO  EXECUTION SUCCESS\n")
+    assert task_id_from_output(log) == "2536e0bc-2daf-4a78-893b-0c89d7a0e639"
+    assert task_id_from_output("EXECUTION FAILURE") is None
+
+
 def test_sonar_failed_task_raises():
     def handler(request):
         return httpx.Response(200, json={"task": {"status": "FAILED"}})
     client = SonarClient("http://s", "t", httpx.Client(base_url="http://s", transport=httpx.MockTransport(handler)))
     with pytest.raises(SonarError, match="FAILED"):
         client.wait_for_task("abc", sleep=lambda s: None)
+
+
+class FakeBatchSonar:
+    """A server that 'analyses' whatever the fake scanner uploaded: one file-level entry per file,
+    code_smells = number of lines, cognitive_complexity = number of 'if', sqale_index = 5 x smells.
+    A file named empty.py comes back without measures, as SonarQube does for all-zero files."""
+
+    def __init__(self):
+        self.projects, self.deleted = {}, []
+
+    def scanner(self, folder, key, host, token, timeout=None, extra=()):
+        assert "-Dsonar.cpd.exclusions=**/*" in extra
+        self.projects[key] = {p.relative_to(folder).as_posix(): p.read_text() for p in folder.rglob("*.py")}
+        return f"task-{key}"
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/ce/task":
+            return httpx.Response(200, json={"task": {"status": "SUCCESS"}})
+        if request.url.path == "/api/measures/component_tree":
+            assert request.url.params["qualifiers"] == "FIL"
+            files = self.projects[request.url.params["component"]]
+            components = []
+            for path, text in sorted(files.items()):
+                lines, ifs = text.count("\n"), text.count("if ")
+                measures = [] if path.endswith("empty.py") else [
+                    {"metric": "code_smells", "value": str(lines)}, {"metric": "cognitive_complexity", "value": str(ifs)},
+                    {"metric": "sqale_index", "value": str(5 * lines)}]
+                components.append({"path": path, "measures": measures})
+            return httpx.Response(200, json={"paging": {"total": len(components)}, "components": components})
+        if request.url.path == "/api/projects/delete":
+            self.deleted.append(request.content.decode())
+            return httpx.Response(204)
+        return httpx.Response(404)
+
+
+def test_batch_maps_every_pr_folder_to_its_sample_id():
+    fake = FakeBatchSonar()
+    client = SonarClient("http://s", "t", httpx.Client(base_url="http://s", transport=httpx.MockTransport(fake.handler)))
+    # PR 1 edits two files in two folders (SonarQube would collapse these into separate DIRs);
+    # PR 2 adds a brand-new file, so its before side is empty.
+    before = {"o/r#1": {"src/pkg/a.py": "x = 1\n", "src/pkg/sub/b.py": "if x:\n    y = 2\n"},
+              "o/r#2": {}}
+    after = {"o/r#1": {"src/pkg/a.py": "x = 1\nif x:\n    z = 3\n", "src/pkg/sub/b.py": "if x:\n    y = 2\n"},
+             "o/r#2": {"pkg/new.py": "if a:\n    b = 1\nc = 2\n", "pkg/empty.py": "\n"}}
+    old = scan_batch_side(before, "v5_batch_1_before", client, "h", "t", fake.scanner)
+    new = scan_batch_side(after, "v5_batch_1_after", client, "h", "t", fake.scanner)
+    assert set(fake.projects["v5_batch_1_before"]) == {"o__r__1/src/pkg/a.py", "o__r__1/src/pkg/sub/b.py"}
+    rows = {row["sample_id"]: row for row in batch_rows(["o/r#1", "o/r#2"], old, new)}
+    # PR 1 after: a.py 3 lines + b.py 2 lines = 5 smells, 2 ifs; before: 1 + 2 = 3 smells, 1 if.
+    assert rows["o/r#1"] == {"sample_id": "o/r#1", "sonar.code_smells": 5.0, "sonar.cognitive_complexity": 2.0,
+                             "sonar.sqale_index": 25.0, "sonar.delta_code_smells": 2.0,
+                             "sonar.delta_cognitive_complexity": 1.0, "sonar.delta_sqale_index": 10.0}
+    # PR 2: new.py 3 lines, 1 if; empty.py has no measures (0); before side empty -> 0.
+    assert rows["o/r#2"]["sonar.code_smells"] == 3.0 and rows["o/r#2"]["sonar.delta_code_smells"] == 3.0
+    assert rows["o/r#2"]["sonar.delta_cognitive_complexity"] == 1.0
+    assert fake.deleted == ["project=v5_batch_1_before", "project=v5_batch_1_after"]
+
+
+def test_batch_row_is_null_when_sonar_returned_nothing_for_a_written_folder():
+    rows = batch_rows(["o/r#3"], ({"o__r__3"}, {}), ({"o__r__3"}, {"o__r__3": {"code_smells": 1.0,
+                      "cognitive_complexity": 0.0, "sqale_index": 5.0}}))
+    assert rows[0]["sonar.code_smells"] == 1.0 and rows[0]["sonar.delta_code_smells"] is None
+
+
+def test_batches_never_mix_splits_and_respect_the_order():
+    spec = importlib.util.spec_from_file_location("sonar_cli", Path(__file__).parents[1] / "scripts/sonar_v5.py")
+    cli = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cli)
+    samples = [{"sample_id": f"o/r#{i}", "split": split} for i, split in
+               enumerate(["train"] * 3 + ["test"] * 5 + ["val"] * 2)]
+    batches = cli.make_batches(samples, ["test", "val", "train"], size=2)
+    assert [(split, len(batch)) for split, batch in batches] == [
+        ("test", 2), ("test", 2), ("test", 1), ("val", 2), ("train", 2), ("train", 1)]
+    assert pr_folder("pallets/flask#5123") == "pallets__flask__5123"
 
 
 def test_project_key_and_seeded_test_subset():

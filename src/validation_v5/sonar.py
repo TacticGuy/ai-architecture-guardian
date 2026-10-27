@@ -75,21 +75,34 @@ def project_key(sample_id: str, side: str) -> str:
 
 
 def run_scanner(folder: Path, key: str, host_url: str, token: str, image: str = SCANNER_IMAGE,
-                timeout: int = 900) -> str:
+                timeout: int = 900, extra: tuple[str, ...] = ()) -> str:
     """Scan ``folder`` with the Docker scanner and return the Compute Engine task id."""
     command = ["docker", "run", "--rm", "-e", f"SONAR_HOST_URL={host_url}", "-e", "SONAR_TOKEN",
-               "-v", f"{folder.resolve()}:/usr/src", image,
+               "-v", f"{folder.resolve()}:/usr/src", image, *extra,
                f"-Dsonar.projectKey={key}", "-Dsonar.sources=.", "-Dsonar.python.version=3",
                "-Dsonar.scm.disabled=true", "-Dsonar.sourceEncoding=UTF-8"]
     result = subprocess.run(command, capture_output=True, text=True, timeout=timeout,
                             env={**os.environ, "SONAR_TOKEN": token})
     if result.returncode:
         raise SonarError(f"sonar-scanner failed for {key}: {result.stdout[-400:]}{result.stderr[-400:]}")
+    task = task_id_from_output(result.stdout + result.stderr)
     report = folder / ".scannerwork" / "report-task.txt"
-    for line in report.read_text(encoding="utf-8").splitlines() if report.is_file() else []:
-        if line.startswith("ceTaskId="):
-            return line.split("=", 1)[1].strip()
-    raise SonarError(f"sonar-scanner wrote no task id for {key}")
+    if task is None and report.is_file():  # older scanners keep the work folder next to the sources
+        task = next((line.split("=", 1)[1].strip() for line in report.read_text(encoding="utf-8").splitlines()
+                     if line.startswith("ceTaskId=")), None)
+    if task is None:
+        raise SonarError(f"sonar-scanner reported no task id for {key}")
+    return task
+
+
+def task_id_from_output(log: str) -> str | None:
+    """The Compute Engine task id from the scanner log ("... /api/ce/task?id=<id>").
+
+    Recent scanner images keep their work folder in the container's /tmp, so the log is
+    the only place the id survives.
+    """
+    match = re.search(r"/api/ce/task\?id=([A-Za-z0-9_-]+)", log)
+    return match.group(1) if match else None
 
 
 def scan_side(files: dict[str, str], key: str, client: SonarClient, host_url: str, token: str,
@@ -97,17 +110,18 @@ def scan_side(files: dict[str, str], key: str, client: SonarClient, host_url: st
     """Measures for one side. A side with no files (all added/deleted) is zero, not a scan."""
     if not files:
         return {metric: 0.0 for metric in DELTA_METRICS} | {"duplicated_lines_density": None}
-    with tempfile.TemporaryDirectory() as folder:
-        root = Path(folder)
-        for path, text in files.items():
-            target = root / path
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(text, encoding="utf-8")
-        task = scanner(root, key, host_url, token)
     try:
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            for path, text in files.items():
+                target = root / path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(text, encoding="utf-8")
+            task = scanner(root, key, host_url, token)
         client.wait_for_task(task)
         return client.measures(key)
     finally:
+        # Also after a failed scan: the scanner may have created the project before failing.
         client.delete_project(key)
 
 
@@ -131,3 +145,98 @@ def select_sonar_samples(samples: list[dict[str, Any]], limit: int | None, seed:
         return test
     chosen = set(s["sample_id"] for s in random.Random(seed).sample(test, limit))
     return [sample for sample in test if sample["sample_id"] in chosen]
+
+
+# ---------------------------------------------------------------- batch mode
+# Scanner start-up and server processing are paid per scan, not per file, so many PRs share
+# one project: one folder per PR (<owner>__<repo>__<number>/<path>), one scan per side.
+
+BATCH_METRICS = ("code_smells", "cognitive_complexity", "sqale_index")
+# Duplication off: in a batch it would compare code across unrelated PRs.
+BATCH_SCANNER_ARGS = ("-Dsonar.cpd.exclusions=**/*",)
+TREE_LIMIT = 10_000  # component_tree cannot page past 10,000 results
+
+
+def pr_folder(sample_id: str) -> str:
+    """``pallets/flask#5123`` -> ``pallets__flask__5123``."""
+    repo, number = sample_id.rsplit("#", 1)
+    return f"{repo.replace('/', '__')}__{number}"
+
+
+def write_batch(root: Path, files_by_sample: dict[str, dict[str, str]]) -> set[str]:
+    """Write each PR's files under root/<pr folder>/<path>; return the PR folders that got a file."""
+    written = set()
+    for sample_id, files in files_by_sample.items():
+        for path, text in files.items():
+            target = root / pr_folder(sample_id) / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(text, encoding="utf-8")
+            written.add(pr_folder(sample_id))
+    return written
+
+
+def read_tree(client: SonarClient, project_key: str) -> dict[str, dict[str, float]]:
+    """Per-PR-folder totals of BATCH_METRICS, summed over the folder's files.
+
+    Files, not directories: SonarQube collapses folder chains (``o__r__1/src/pkg`` is one DIR,
+    and a PR touching two folders has two DIRs), so summing files by the first path segment is
+    the only exact mapping. The three metrics are additive; a file without a value has 0.
+    """
+    totals: dict[str, dict[str, float]] = {}
+    page = 1
+    while True:
+        payload = client._get("/api/measures/component_tree", component=project_key, qualifiers="FIL",
+                              strategy="all", metricKeys=",".join(BATCH_METRICS), ps="500", p=str(page)).json()
+        if payload["paging"]["total"] > TREE_LIMIT:
+            raise SonarError(f"{project_key} has {payload['paging']['total']} files; use a smaller batch")
+        for component in payload["components"]:
+            folder = component["path"].replace("\\", "/").split("/", 1)[0]
+            row = totals.setdefault(folder, {metric: 0.0 for metric in BATCH_METRICS})
+            for measure in component.get("measures", []):
+                if measure["metric"] in row and "value" in measure:
+                    row[measure["metric"]] += float(measure["value"])
+        if page * 500 >= payload["paging"]["total"]:
+            return totals
+        page += 1
+
+
+def scan_batch_side(files_by_sample: dict[str, dict[str, str]], key: str, client: SonarClient, host_url: str,
+                    token: str, scanner: Callable[..., str] = run_scanner,
+                    timeout: int = 3600) -> tuple[set[str], dict[str, dict[str, float]]]:
+    """Scan one side of a batch as one project; return (folders written, totals per folder)."""
+    try:
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            written = write_batch(root, files_by_sample)
+            if not written:
+                return written, {}
+            task = scanner(root, key, host_url, token, timeout=timeout, extra=BATCH_SCANNER_ARGS)
+        client.wait_for_task(task, timeout=timeout)
+        return written, read_tree(client, key)
+    finally:
+        client.delete_project(key)
+
+
+def batch_rows(sample_ids: list[str], before: tuple[set[str], dict], after: tuple[set[str], dict]) -> list[dict[str, Any]]:
+    """sonar.<metric> (after) and sonar.delta_<metric> (after - before) per sample_id.
+
+    A side with no files (the PR added or deleted all of them) counts as 0. A side whose files
+    were written but that SonarQube returned nothing for is unknown (null), not 0.
+    """
+    rows = []
+    for sample_id in sample_ids:
+        folder = pr_folder(sample_id)
+        sides = []
+        for written, totals in (before, after):
+            if folder not in written:
+                sides.append({metric: 0.0 for metric in BATCH_METRICS})
+            else:
+                sides.append(totals.get(folder))
+        old, new = sides
+        row: dict[str, Any] = {"sample_id": sample_id}
+        for metric in BATCH_METRICS:
+            row[f"sonar.{metric}"] = new[metric] if new else None
+        for metric in BATCH_METRICS:
+            row[f"sonar.delta_{metric}"] = new[metric] - old[metric] if new and old else None
+        rows.append(row)
+    return rows
