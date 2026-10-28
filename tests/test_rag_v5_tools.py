@@ -2,13 +2,43 @@ import json
 
 import pytest
 
-from scripts.rag_v5_evaluate import bootstrap, prepare_sheets, select_test_files
+from scripts.rag_v5_evaluate import (
+    bootstrap,
+    complete_case_records,
+    prepare_sheets,
+    select_test_files,
+    valid_generation,
+)
 from scripts.rag_v5_survey import analyze, build_form
 
 
 def test_bootstrap_is_repeatable():
     assert bootstrap([0.1, 0.2, 0.3]) == bootstrap([0.1, 0.2, 0.3])
     assert bootstrap([1, 1, 1])["low"] == 1
+
+
+def test_failed_or_blank_generations_are_not_scoreable():
+    assert not valid_generation({"answer": {"status": "grounding_failed", "explanation": "text"}})
+    assert not valid_generation({"answer": {"status": "ok", "explanation": "  "}})
+    assert valid_generation({"answer": {"status": "ok", "explanation": "grounded text"}})
+
+
+def test_complete_cases_require_all_three_valid_modes():
+    records = [
+        {"sample_id": "complete#1", "mode": mode,
+         "answer": {"status": "ok", "explanation": mode}}
+        for mode in ("signature", "text", "none")
+    ] + [
+        {"sample_id": "incomplete#2", "mode": "signature",
+         "answer": {"status": "ok", "explanation": "good"}},
+        {"sample_id": "incomplete#2", "mode": "text",
+         "answer": {"status": "grounding_failed", "explanation": ""}},
+        {"sample_id": "incomplete#2", "mode": "none",
+         "answer": {"status": "ok", "explanation": "good"}},
+    ]
+    kept = complete_case_records(records)
+    assert len(kept) == 3
+    assert {record["sample_id"] for record in kept} == {"complete#1"}
 
 
 def test_sheets_exclude_synthetic_fixtures(tmp_path):
