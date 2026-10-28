@@ -386,7 +386,8 @@ function ExplanationView({ explanation }: { explanation: Explanation | null }) {
         <div>
           <h4 className="text-sm font-semibold">Suggested fix{suggestion.refactoring ? `: ${suggestion.refactoring}` : ""}</h4>
           {!!suggestion.files?.length && <p className="mt-1 break-all font-mono text-xs text-muted-foreground">{suggestion.files.join(", ")}</p>}
-          {!!suggestion.steps?.length && <Markdown className="mt-2" text={suggestion.steps.map((step, i) => `${i + 1}. ${step}`).join("\n")} />}
+          {/* Models often number their own steps ("1. Move ..."); drop that so the list is not "1. 1. Move". */}
+          {!!suggestion.steps?.length && <Markdown className="mt-2" text={suggestion.steps.map((step, i) => `${i + 1}. ${step.replace(/^\s*\d+[.)]\s+/, "")}`).join("\n")} />}
           {suggestion.code_sketch && (
             <pre className="mt-2 overflow-x-auto rounded-lg border border-border bg-muted p-3 font-mono text-xs leading-5">{suggestion.code_sketch}</pre>
           )}
