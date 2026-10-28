@@ -4,7 +4,7 @@
 type against an independent reference and report precision (P), recall (R) and F1. Full
 tables: `data/validation_v5/results.md`. Every disagreement is listed in `results.json`.
 
-**Reproduce.** `python scripts/validate_graph_v5.py --pycg-dir <PyCG clone> --repos-dir <checkouts> --out data/validation_v5/`
+**Reproduce.** `python scripts/validate_graph_v5.py --pycg-dir <PyCG clone> --repos-dir <checkouts> --pycg-python <Python 3.10 with PyCG> --out data/validation_v5/`
 
 ## Method
 
@@ -31,7 +31,7 @@ dataset.** This measures the extraction *method* on independent code, not the 6,
 | Check | Precision | Recall | F1 |
 |---|---|---|---|
 | CALLS vs PyCG micro-benchmark (ours) | 97.2 | 43.6 | 60.2 |
-| CALLS, PyCG itself (paper, not run here [1]) | 99.2 | 69.9 | |
+| CALLS, PyCG itself on the same benchmark (run here [1]) | 95.9 | 87.7 | 91.6 |
 | IMPORTS vs grimp, 10 repositories | 97.7 | 100.0 | 98.8 |
 | IMPORTS vs grimp, modules both tools scan | 100.0 | 100.0 | 100.0 |
 | Gold set: CALLS | 97.9 | 88.7 | 93.1 |
@@ -57,6 +57,12 @@ The commit of each is in `results.json`.
   recall, against 93% for `imports` and 67% for `classes`. On real code (the gold set) recall is
   much higher, at 88.7%, because most calls there are direct. All 3 PyCG false positives, and the
   only gold-set one, are real bugs (B5, B6, B8 in `bugs_found.md`).
+* **PyCG itself, run on the same benchmark with the same conversion**, reaches 95.9% precision
+  and 87.7% recall (213 of 243 gold edges, 9 false positives). The precision of the two is about
+  the same, and the recall gap is the price of not tracking values: PyCG follows assignments,
+  returns, containers and lambdas, and we do not. PyCG is weakest on `imports` (43% recall),
+  where we reach 93%. This is a fair comparison of name resolution only: PyCG was built for this
+  benchmark, and it produces call graphs, not the typed multi-relation graph the model needs.
 * **INHERITS misses only builtin bases.** 8 of the 9 misses are `ValueError`, `OSError`,
   `Warning` and similar: builtin bases are dropped (B1). Every internal base and every
   non-builtin external base was found.
@@ -73,10 +79,11 @@ B2 has since been fixed in the graph builder, and the tables above were re-run a
 
 ## Limitations
 
-* **PyCG row.** PyCG could not be run on this machine. It needs Python 3.8–3.10 in a separate
-  environment, and installing the cloned tool was not done. Its row quotes the paper's abstract.
-  The paper counts all callees, including external ones, so that row is a reference point, not a
-  like-for-like comparison. `--pycg-python <interpreter>` adds a real row with the same conversion.
+* **PyCG row.** PyCG (commit `8d5dc40`, version 0.0.8) was run in a separate Python 3.10
+  environment, because it does not support newer Python versions, with each snippet's `main.py`
+  as entry point, as its own tests do. Its output went through the same conversion as ours. Its
+  measured numbers differ from the paper's abstract (precision ~99.2%, recall ~69.9%) because
+  the paper also counts external callees, which we drop on both sides.
 * **Gold set.** The gold set is small (6 files, 99 relations) and was labelled by one person.
   The second-labeller agreement on `starlette/config.py` is reported once
   `second_labeller.json` is filled in. The labels are a careful reading, not executed ground truth.
