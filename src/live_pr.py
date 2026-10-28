@@ -4,10 +4,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 import re
 import shutil
 import subprocess
+import tempfile
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -73,6 +75,7 @@ def fetch_pr(reference: PRReference, token: str | None = None,
     if not all(isinstance(value, str) and value for value in
                (base.get("sha"), head.get("sha"), base_repo.get("clone_url"))):
         raise LivePRError("GitHub response lacks the base SHA, head SHA, or clone URL")
+    merge_commit_sha = payload.get("merge_commit_sha")
     return {
         "sample_id": reference.sample_id,
         "repo": f"{reference.owner}/{reference.repo}",
@@ -81,6 +84,10 @@ def fetch_pr(reference: PRReference, token: str | None = None,
         "title": payload.get("title"),
         "state": payload.get("state"),
         "draft": bool(payload.get("draft")),
+        "merged": bool(payload.get("merged")),
+        "merge_commit_sha": merge_commit_sha.lower() if isinstance(merge_commit_sha, str) else None,
+        "commit_count": payload.get("commits") if type(payload.get("commits")) is int else None,
+        "base_ref": base.get("ref") or "main",
         "base_sha": base["sha"].lower(),
         "head_sha": head["sha"].lower(),
         "clone_url": base_repo["clone_url"],
@@ -90,29 +97,123 @@ def fetch_pr(reference: PRReference, token: str | None = None,
 
 def prepare_repository(pr: dict[str, Any], reference: PRReference, cache: Path,
                        repository_path: Path | None = None) -> Path:
-    """Fetch GitHub's synthetic merge commit, matching a real pre-merge integration."""
+    """Choose the before/after commits for the PR's state and record how they were chosen.
+
+    open, merge ref exists      GitHub's test merge (mode "open_test_merge")
+    open, no merge ref          a local merge of head into the base branch ("open_local_merge");
+                                conflicts raise LivePRError
+    merged                      the real merge/squash/rebase commit on the base branch ("merged_pr")
+    closed without merging      head against its merge-base with the base branch ("closed_unmerged")
+    Sets pr["analysis_base_sha"], pr["analysis_after_sha"] and pr["mode"].
+    """
     repository = repository_path.resolve() if repository_path else cache.resolve()
     if repository_path is None and not (repository / ".git").is_dir():
         repository.parent.mkdir(parents=True, exist_ok=True)
         _run(["git", "clone", "--filter=blob:none", "--no-checkout", pr["clone_url"], str(repository)])
     if not repository.is_dir() or not (repository / ".git").is_dir():
         raise LivePRError(f"Not a normal Git clone: {repository}")
-    merge_ref = f"refs/remotes/origin/live-merge-{reference.number}"
-    _run(["git", "-C", str(repository), "fetch", "--no-tags", "--depth=2", "origin",
-          f"+refs/pull/{reference.number}/merge:{merge_ref}"])
-    fields = _run(["git", "-C", str(repository), "rev-list", "--parents", "-n", "1", merge_ref]).split()
+    git = _Git(repository)
+    base_ref = f"refs/remotes/origin/live-base-{reference.number}"
+    head_ref = f"refs/remotes/origin/live-head-{reference.number}"
+    git("fetch", "--no-tags", "origin", f"+refs/heads/{pr['base_ref']}:{base_ref}")
+    git("fetch", "--no-tags", "origin", f"+refs/pull/{reference.number}/head:{head_ref}")
+    if git.sha(head_ref) != pr["head_sha"]:
+        raise LivePRError("GitHub's PR head ref does not match the API head revision; retry in a minute")
+    if pr.get("merged"):
+        _prepare_merged(pr, git, base_ref)
+    elif pr.get("state") == "closed":
+        _prepare_closed_unmerged(pr, git, base_ref)
+    elif git("ls-remote", "origin", f"refs/pull/{reference.number}/merge").strip():
+        _prepare_test_merge(pr, git, reference.number)
+    else:
+        _prepare_local_merge(pr, git, base_ref, reference.number)
+    for sha in (pr["analysis_base_sha"], pr["analysis_after_sha"]):
+        git("cat-file", "-e", f"{sha}^{{commit}}")
+    return repository
+
+
+def _prepare_test_merge(pr: dict[str, Any], git: _Git, number: int) -> None:
+    merge_ref = f"refs/remotes/origin/live-merge-{number}"
+    git("fetch", "--no-tags", "origin", f"+refs/pull/{number}/merge:{merge_ref}")
+    fields = git.parents(merge_ref)
     if len(fields) != 3:
         raise LivePRError("GitHub PR test merge does not have the expected base and head parents")
     merge_sha, base_parent, head_parent = fields
-    if head_parent.lower() != pr["head_sha"]:
-        raise LivePRError("GitHub PR test merge head does not match the API head revision")
-    if base_parent.lower() != pr["base_sha"]:
-        raise LivePRError("GitHub PR test merge base does not match the API base revision")
-    pr["analysis_base_sha"] = base_parent.lower()
-    pr["analysis_after_sha"] = merge_sha.lower()
-    for sha in (pr["analysis_base_sha"], pr["analysis_after_sha"]):
-        _run(["git", "-C", str(repository), "cat-file", "-e", f"{sha}^{{commit}}"])
-    return repository
+    if head_parent != pr["head_sha"]:
+        raise LivePRError("GitHub's test merge is older than the PR head; GitHub is still recomputing it, "
+                          "retry in a minute")
+    # GitHub builds the test merge against the base branch as it was when it last computed it.
+    # The API's base.sha can be newer; the merge commit's own first parent is the honest base.
+    if base_parent != pr["base_sha"]:
+        pr["api_base_sha"] = pr["base_sha"]
+        pr["test_merge_base_sha"] = base_parent
+        pr["base_note"] = "GitHub test merge was computed against an older base"
+    pr.update(mode="open_test_merge", analysis_base_sha=base_parent, analysis_after_sha=merge_sha)
+
+
+def _prepare_merged(pr: dict[str, Any], git: _Git, base_ref: str) -> None:
+    merge_sha = pr.get("merge_commit_sha")
+    if not merge_sha:
+        raise LivePRError("GitHub says the PR is merged but gives no merge commit")
+    if not git.ok("cat-file", "-e", f"{merge_sha}^{{commit}}") or \
+            not git.ok("merge-base", "--is-ancestor", merge_sha, base_ref):
+        raise LivePRError(f"Merge commit {merge_sha[:12]} is not on the base branch {pr['base_ref']}")
+    fields = git.parents(merge_sha)
+    if len(fields) == 3:
+        if fields[2] != pr["head_sha"]:
+            raise LivePRError("The merge commit's second parent is not the PR head")
+        method, before = "merge", fields[1]
+    elif len(fields) == 2:
+        # A rebase merge keeps each commit's author and author date; a squash commit gets new ones.
+        if git.author(merge_sha) == git.author(pr["head_sha"]) and (pr.get("commit_count") or 1) > 1:
+            count = pr["commit_count"]
+            chain = git("rev-list", "--first-parent", "--parents", f"-n{count}", merge_sha).splitlines()
+            if len(chain) != count or any(len(line.split()) != 2 for line in chain):
+                raise LivePRError("Could not walk back over the rebased PR commits")
+            method, before = "rebase", chain[-1].split()[1]
+        else:
+            method, before = "squash", fields[1]
+    else:
+        raise LivePRError("The merge commit has an unexpected number of parents")
+    pr.update(mode="merged_pr", merge_method=method, analysis_base_sha=before, analysis_after_sha=merge_sha)
+
+
+def _prepare_closed_unmerged(pr: dict[str, Any], git: _Git, base_ref: str) -> None:
+    before = git("merge-base", base_ref, pr["head_sha"]).strip().lower()
+    if not before:
+        raise LivePRError("The PR head shares no history with the base branch")
+    pr.update(mode="closed_unmerged", analysis_base_sha=before, analysis_after_sha=pr["head_sha"],
+              mode_warning="This PR was closed without merging; it is analysed as its head against its "
+                           "merge-base with the base branch.")
+
+
+def _prepare_local_merge(pr: dict[str, Any], git: _Git, base_ref: str, number: int) -> None:
+    """GitHub has no test merge (usually conflicts): try the merge locally, never guess."""
+    base_tip = git.sha(base_ref)
+    worktree = Path(tempfile.mkdtemp(prefix="live-merge-")) / "tree"
+    git("worktree", "add", "--detach", str(worktree), base_tip)
+    try:
+        inside = _Git(worktree)
+        if not inside.ok("-c", "user.name=AI Guardian", "-c", "user.email=live@ai-guardian.invalid",
+                         "merge", "--no-commit", "--no-ff", pr["head_sha"]):
+            inside.ok("merge", "--abort")
+            raise LivePRError(f"This PR has merge conflicts with {pr['base_ref']}; GitHub cannot build a "
+                              "pre-merge state, so it cannot be analysed until the conflicts are resolved.")
+        # Fixed identity and the head's date make the merge commit (and so its SHA) reproducible.
+        date = git("log", "-1", "--format=%cI", pr["head_sha"]).strip()
+        inside("-c", "user.name=AI Guardian", "-c", "user.email=live@ai-guardian.invalid", "commit",
+               "--no-verify", "-m", f"Local test merge of PR #{number}",
+               env={"GIT_AUTHOR_DATE": date, "GIT_COMMITTER_DATE": date})
+        merge_sha = inside.sha("HEAD")
+        git("update-ref", f"refs/live/merge-{number}", merge_sha)
+    finally:
+        git.ok("worktree", "remove", "--force", str(worktree))
+        shutil.rmtree(worktree.parent, ignore_errors=True)
+        git.ok("worktree", "prune")
+    if base_tip != pr["base_sha"]:
+        pr["api_base_sha"] = pr["base_sha"]
+    pr.update(mode="open_local_merge", analysis_base_sha=base_tip, analysis_after_sha=merge_sha,
+              base_note="GitHub had no test merge; the PR head was merged into the base branch locally")
 
 
 def prepare_live_sample(pr: dict[str, Any], repository: Path, output_root: Path,
@@ -171,7 +272,9 @@ def score_live_sample(sample_dir: Path, manifest_path: Path, diff_store_path: Pa
     checkpoint = load_gnn_checkpoint(checkpoint_path)
     target = "cuda" if device == "auto" and torch.cuda.is_available() else ("cpu" if device == "auto" else device)
     gnn = load_gnn_model(checkpoint, target)
-    graph = prepare_graph(sample_dir / "before/graph.pt", checkpoint).to(target)
+    graph, dropped_types = _fit_to_checkpoint_schema(prepare_graph(sample_dir / "before/graph.pt", checkpoint),
+                                                     checkpoint)
+    graph = graph.to(target)
     with torch.no_grad():
         gnn_vector = gnn.encode(graph).cpu().float()
         gnn_probability = float(torch.sigmoid(gnn(graph)).cpu().item())
@@ -212,12 +315,37 @@ def score_live_sample(sample_dir: Path, manifest_path: Path, diff_store_path: Pa
                  "truncated": encoded.truncated, "files_used": encoded.files_used,
                  "files_dropped": encoded.files_dropped},
     }
+    if dropped_types:
+        result["schema_note"] = ("The graph builder now adds " + ", ".join(dropped_types) + ", which this model "
+                                 "was not trained on; they were removed before scoring.")
     if max_hunks:
         result["xai"] = explain_pr(model=fusion, encoder=encoder, analysis_settings=analysis_settings,
                                    diff_text=diff_text, gnn=gnn_vector, stored_diff=diff_vector,
                                    max_hunks=max_hunks)
     result["warning"] = "Prediction for review prioritisation, not proof that the PR causes future debt."
     return result
+
+
+def _fit_to_checkpoint_schema(graph: Any, checkpoint: dict[str, Any]) -> tuple[Any, list[str]]:
+    """Remove node and edge types the checkpoint was not trained on (e.g. v5's global_variable).
+
+    A model only has weights for the relations in its metadata; anything else would crash
+    the forward pass. Returns the graph and the sorted names of what was removed.
+    """
+    node_types, edge_types = checkpoint["metadata"]
+    known_nodes, known_edges = set(node_types), {tuple(edge) for edge in edge_types}
+    known_relations = {edge[1] for edge in known_edges}
+    dropped = set()
+    for edge_type in list(graph.edge_types):
+        if tuple(edge_type) not in known_edges:
+            del graph[edge_type]
+            if edge_type[1] not in known_relations:
+                dropped.add(edge_type[1])
+    for node_type in list(graph.node_types):
+        if node_type not in known_nodes:
+            del graph[node_type]
+            dropped.add(node_type)
+    return graph, sorted(dropped)
 
 
 def analyze_live_pr(url: str, root: Path, *, manifest_path: Path | None = None,
@@ -251,17 +379,50 @@ def analyze_live_pr(url: str, root: Path, *, manifest_path: Path | None = None,
                                analysis_settings=settings)
     report = {"schema_version": 1, "sample_id": metadata["sample_id"], "url": metadata["url"],
               "title": metadata["title"], "state": metadata["state"], "label": None,
-              "split": "live_unlabelled", **result}
+              "split": "live_unlabelled", "mode": metadata.get("mode"),
+              "before_commit_sha": metadata["before_commit_sha"],
+              "integration_commit_sha": metadata["integration_commit_sha"],
+              **{key: metadata[key] for key in ("merge_method", "base_note", "api_base_sha", "mode_warning")
+                 if key in metadata},
+              **result}
     result_path = sample_dir / "live_result.json"
     _write_json(result_path, report)
     return report, result_path
 
 
-def _run(arguments: list[str]) -> str:
-    result = subprocess.run(arguments, capture_output=True, text=True, encoding="utf-8", errors="replace")
+def _run(arguments: list[str], env: dict[str, str] | None = None) -> str:
+    result = subprocess.run(arguments, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                            env={**os.environ, **env} if env else None)
     if result.returncode:
-        raise LivePRError(f"{' '.join(arguments[:3])} failed: {result.stderr.strip()}")
+        shown = [argument for argument in arguments if argument != "-C"][:4]
+        raise LivePRError(f"{' '.join(shown)} failed: {result.stderr.strip()}")
     return result.stdout
+
+
+class _Git:
+    """``git -C <repository>`` with small helpers; every SHA it returns is lower case."""
+
+    def __init__(self, repository: Path):
+        self.repository = repository
+
+    def __call__(self, *arguments: str, env: dict[str, str] | None = None) -> str:
+        return _run(["git", "-C", str(self.repository), *arguments], env)
+
+    def ok(self, *arguments: str) -> bool:
+        try:
+            self(*arguments)
+            return True
+        except LivePRError:
+            return False
+
+    def sha(self, revision: str) -> str:
+        return self("rev-parse", "--verify", f"{revision}^{{commit}}").strip().lower()
+
+    def parents(self, revision: str) -> list[str]:
+        return self("rev-list", "--parents", "-n", "1", revision).lower().split()
+
+    def author(self, revision: str) -> str:
+        return self("log", "-1", "--format=%ae %aI", revision).strip()
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:

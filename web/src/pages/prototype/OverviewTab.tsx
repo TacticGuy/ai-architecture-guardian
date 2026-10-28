@@ -50,7 +50,11 @@ export default function OverviewTab({ version }: { version: string }) {
       <div className="grid gap-6 lg:grid-cols-[3fr_2fr]">
         <Panel title="Risk score of every test PR" caption={`Fusion risk score. The vertical line is the threshold, ${data.threshold.toFixed(3)}.`}>
           <Legend items={[{ label: "safe (0)", className: "bg-safe" }, { label: "risky (1)", className: "bg-risky" }]} />
-          <ul className="space-y-2">
+          {data.scores.length > 0 && (
+            <p className="mb-2 text-xs text-muted-foreground">{data.scores.length.toLocaleString()} PRs{data.scores.length > 20 ? ", scroll for more" : ""}</p>
+          )}
+          {/* v5 has 1,375 test PRs: keep the panel a fixed height and scroll inside it. */}
+          <ul className="max-h-[28rem] space-y-2 overflow-y-auto overscroll-contain pr-2">
             {data.scores.map((row) => (
               <li key={row.sample_id} className="grid grid-cols-[3.5rem_1fr_3.5rem] items-center gap-3" title={`${row.sample_id}: predicted ${row.Prediction}, correct: ${row.Correct}`}>
                 <span className="text-sm tabular-nums">{row.PR}</span>

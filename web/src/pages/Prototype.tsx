@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { Bot, GitPullRequest, LayoutDashboard, Search } from "lucide-react";
+import { Bot, GitPullRequest, LayoutDashboard, Network, Search } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
@@ -8,6 +8,7 @@ import { NavBar } from "@/components/NavBar";
 import { Notice } from "@/components/kit";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import AttributionTab from "@/pages/prototype/AttributionTab";
 import ChatTab from "@/pages/prototype/ChatTab";
 import ExplorerTab from "@/pages/prototype/ExplorerTab";
 import LiveTab from "@/pages/prototype/LiveTab";
@@ -18,6 +19,7 @@ const tabs = [
   { id: "explorer", label: "PR explorer", icon: Search },
   { id: "live", label: "Live GitHub PR", icon: GitPullRequest },
   { id: "chat", label: "Ask the chatbot", icon: Bot },
+  { id: "attribution", label: "Attribution (v5)", icon: Network },
 ] as const;
 type TabId = (typeof tabs)[number]["id"];
 
@@ -84,8 +86,9 @@ export default function Prototype() {
         </div>
 
         <div className="mt-8">
-          {error && <Notice kind="error">{error}</Notice>}
-          {version && (
+          {error && tab !== "attribution" && <Notice kind="error">{error}</Notice>}
+          {tab === "attribution" && <AttributionTab />}
+          {version && tab !== "attribution" && (
             <motion.div key={`${tab}-${version}`} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35 }}>
               {tab === "overview" && <OverviewTab version={version} />}
               {tab === "explorer" && <ExplorerTab version={version} />}

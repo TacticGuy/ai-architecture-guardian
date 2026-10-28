@@ -1,6 +1,7 @@
 import { Send } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
+import { Markdown } from "@/components/Markdown";
 import { BeamSearch } from "@/components/spectrumui/beam-search";
 import { LoadingButton } from "@/components/ui/loading-button";
 import { api } from "@/lib/api";
@@ -87,7 +88,9 @@ export default function ChatTab({ version }: { version: string }) {
                 message.error && "border-destructive/50 bg-destructive/10",
               )}
             >
-              <p className="whitespace-pre-wrap break-words">{message.text}</p>
+              {message.role === "assistant" && !message.error
+                ? <Markdown text={message.text} />
+                : <p className="whitespace-pre-wrap break-words">{message.text}</p>}
               {message.extra?.map((line) => <p key={line} className="mt-2 break-words text-xs text-muted-foreground">{line}</p>)}
             </div>
           </div>

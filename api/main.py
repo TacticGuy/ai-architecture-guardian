@@ -20,6 +20,7 @@ from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 
 from api import views
+from api.v5_attribution import create_router as create_v5_router
 from src.live_pr import LivePRError, analyze_live_pr
 from src.rag.api import Chatbot
 from src.rag.llm import LLMError
@@ -55,6 +56,7 @@ class LiveRequest(BaseModel):
 def create_app(root: Path | None = None, llm_factory: Any = None) -> FastAPI:
     root = Path(root or os.environ.get("GUARDIAN_ROOT", Path(__file__).resolve().parents[1]))
     app = FastAPI(title="AI Guardian API")
+    app.include_router(create_v5_router(root))
     sessions: dict[str, Chatbot] = {}
 
     def versions() -> list[str]:
