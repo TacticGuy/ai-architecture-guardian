@@ -36,6 +36,19 @@ def test_pr_list_and_explanation_layers(client):
     assert client.get("/api/prs/detail", params={"sample_id": "o/r#999"}).status_code == 404
 
 
+def test_v5_attribution_counts_as_explained_but_not_as_v4_layers(client, tmp_path):
+    """A v5 edge-attribution file is explained (shown in the Attribution tab), never fed to layer A/B/C."""
+    import json
+    folder = tmp_path / "root/data/xai/v7"
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "o__r__32.json").write_text(json.dumps({"schema": "attribution_v5/1", "sample_id": "o/r#32"}),
+                                         encoding="utf-8")
+    detail = client.get("/api/prs/detail", params={"sample_id": "o/r#32"}).json()
+    assert detail["explained"] and detail["has_attribution_v5"] and detail["explanation"] is None
+    v4 = client.get("/api/prs/detail", params={"sample_id": "o/r#30"}).json()
+    assert v4["explanation"] is not None and not v4["has_attribution_v5"]
+
+
 def test_chat_answers_with_sources_and_rejects_empty(client):
     answer = client.post("/api/chat", json={"question": "Why is PR #30 risky?", "session_id": "s1"}).json()
     assert "0.765" in answer["text"] and "pr:o/r#30" in answer["sources"]

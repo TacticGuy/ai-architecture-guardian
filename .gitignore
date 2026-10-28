@@ -37,3 +37,15 @@ data/live/
 # Web frontend
 web/node_modules/
 web/dist/
+# v5 generated outputs (data, not code)
+data/tool_metrics_v5.jsonl
+data/tool_metrics_v5.meta.json
+data/sonar_v5.jsonl
+data/sonar_v5.meta.json
+data/xai_v5/
+data/xai_v51/
+data/rag_v5/
+data/comparison_v5*/
+kaggle_v5*/
+xai_v5_for_team.zip
+data/v5_manifest.jsonl

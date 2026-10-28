@@ -48,7 +48,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--split", type=Path, default=ROOT / "config/coupling_split_v5.json")
     parser.add_argument("--gnn-dir", type=Path, default=ROOT / "data/gnn_v5")
     parser.add_argument("--embeddings-dir", type=Path, default=ROOT / "data/embeddings_v5")
-    parser.add_argument("--tool-metrics", type=Path, default=ROOT / "data/tool_metrics_v5.jsonl")
+    parser.add_argument("--tool-metrics", type=Path, nargs="+", default=[ROOT / "data/tool_metrics_v5.jsonl"],
+                        help="one or more jsonl files ({'sample_id', 'tool.metric': number}), merged by sample_id")
     parser.add_argument("--output-dir", type=Path, default=ROOT / "data/comparison_v5")
     parser.add_argument("--bootstrap", type=int, default=1000)
     args = parser.parse_args(argv)
@@ -114,6 +115,13 @@ def main(argv: list[str] | None = None) -> int:
             make_pipeline(SimpleImputer(strategy="median"), StandardScaler(),
                           LogisticRegression(class_weight="balanced", max_iter=3000)), features)
     fixed_thresholds: dict[str, float] = {}
+    # Industry-style quality gate, fixed in advance (no training): SonarQube flags a PR that adds
+    # technical debt (sqale_index = estimated minutes of remediation work).
+    gate = _tool_column(args.tool_metrics, "sonar.delta_sqale_index", ids)
+    if gate is not None and not np.isnan(gate["test"]).any():
+        scores["sonar_debt_gate_rule"] = {s: 1.0 / (1.0 + np.exp(-np.nan_to_num(gate[s], nan=0.0))) for s in SPLITS}
+        descriptions["sonar_debt_gate_rule"] = "SonarQube quality gate: flag the PR if it adds technical debt (fixed rule)"
+        fixed_thresholds["sonar_debt_gate_rule"] = float(1.0 / (1.0 + np.exp(-0.5)))
     subset_rules: dict[str, tuple[str, np.ndarray, np.ndarray]] = {}
     for tool, columns in test_only_tools.items():
         # A tool run on the test PRs only (SonarQube: too slow for every PR) cannot train a model.
@@ -139,11 +147,13 @@ def main(argv: list[str] | None = None) -> int:
         fit(f"{model_name}_only", f"{model_name} diff embedding only (PCA + logistic regression)",
             make_pipeline(StandardScaler(), PCA(16, random_state=0), LogisticRegression(class_weight="balanced", max_iter=3000)),
             vectors)
-        gnn_vectors = _gnn_embeddings(args.gnn_dir, ids)
-        if gnn_vectors is not None:
-            fit(f"fusion_gnn_{model_name}", f"Fusion: GNN vector + {model_name} diff (PCA + logistic regression)",
-                make_pipeline(StandardScaler(), PCA(24, random_state=0), LogisticRegression(class_weight="balanced", max_iter=3000)),
-                combine(gnn_vectors, vectors))
+        if gnn is not None:
+            # Late fusion: mix the GNN's score (structure + history) with the diff model's score.
+            # The weight is chosen on validation only; alpha = 1 means the diff adds nothing.
+            alpha, fused = _late_fusion(scores["gnn"], scores[f"{model_name}_only"], labels["validation"])
+            scores[f"fusion_gnn_{model_name}"] = fused
+            descriptions[f"fusion_gnn_{model_name}"] = (f"Late fusion: {alpha:.2f} x GNN + {1 - alpha:.2f} x {model_name} "
+                                                       "(log-odds; weight chosen on validation)")
 
     results = {"split": split, "counts": {s: {"prs": len(rows[s]), "degrading": int(labels[s].sum())} for s in SPLITS},
                "models": {}}
@@ -190,6 +200,20 @@ def main(argv: list[str] | None = None) -> int:
                                  *(f"{scores[m][s][index]:.6f}" if s in scores[m] else "" for m in scores)])
     print(_markdown(results))
     return 0
+
+
+def _late_fusion(gnn: dict, diff: dict, validation_labels: np.ndarray) -> tuple[float, dict]:
+    def logit(values: np.ndarray) -> np.ndarray:
+        clipped = np.clip(values, 1e-6, 1 - 1e-6)
+        return np.log(clipped / (1 - clipped))
+
+    def mix(alpha: float, split: str) -> np.ndarray:
+        return 1.0 / (1.0 + np.exp(-(alpha * logit(gnn[split]) + (1 - alpha) * logit(diff[split]))))
+
+    grid = [round(step * 0.05, 2) for step in range(21)]
+    best = max(grid, key=lambda a: (binary_metrics(validation_labels.tolist(), mix(a, "validation").tolist())[
+        "pr_auc_average_precision"], a))           # ties go to the larger GNN weight
+    return best, {split: mix(best, split) for split in SPLITS}
 
 
 def _best_threshold(labels: np.ndarray, scores: np.ndarray) -> float:
@@ -243,7 +267,7 @@ def _embedding_table(path: Path, ids):
     return {s: np.stack([np.asarray(vectors[i], dtype=float) for i in ids[s]]) for s in SPLITS}
 
 
-def _tool_features(path: Path, ids) -> tuple[dict[str, dict[str, np.ndarray]], dict[str, dict[str, np.ndarray]]]:
+def _tool_features(paths, ids) -> tuple[dict[str, dict[str, np.ndarray]], dict[str, dict[str, np.ndarray]]]:
     """Tool numbers from ``tool_metrics_v5.jsonl`` ({"sample_id", "tool.metric": number or null}).
 
     Returns (tools measured on every PR -> feature tables per split,
@@ -251,13 +275,17 @@ def _tool_features(path: Path, ids) -> tuple[dict[str, dict[str, np.ndarray]], d
     A tool missing some PRs it should cover is skipped with a message; single nulls (the tool
     failed on that PR) become NaN and are imputed with the training median.
     """
-    if not path.is_file():
+    rows: dict[str, dict] = {}
+    for path in ([paths] if isinstance(paths, Path) else paths):
+        if not path.is_file():
+            print(f"{path}: not found, skipped")
+            continue
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                row = json.loads(line)
+                rows.setdefault(row["sample_id"], {}).update(row)
+    if not rows:
         return {}, {}
-    rows = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if line.strip():
-            row = json.loads(line)
-            rows[row["sample_id"]] = row
 
     def has(sample_id: str, tool: str) -> bool:
         row = rows.get(sample_id, {})
@@ -271,7 +299,9 @@ def _tool_features(path: Path, ids) -> tuple[dict[str, dict[str, np.ndarray]], d
     test_only: dict[str, dict[str, np.ndarray]] = {}
     for tool in sorted({key.split(".", 1)[0] for row in rows.values() for key in row if "." in key}):
         keys = sorted({key for row in rows.values() for key in row if key.startswith(f"{tool}.")})
-        if all(has(i, tool) for s in SPLITS for i in ids[s]):
+        every = [i for s in SPLITS for i in ids[s]]
+        if sum(has(i, tool) for i in every) >= 0.99 * len(every):
+            # Measured on (almost) every PR; the few PRs where the tool failed are imputed.
             full[tool] = {s: np.array([[value(i, k) for k in keys] for i in ids[s]]) for s in SPLITS}
         elif any(has(i, tool) for i in ids["test"]):
             # NaN marks test PRs the tool was not run on; those rules are scored on the covered PRs only.
@@ -280,6 +310,20 @@ def _tool_features(path: Path, ids) -> tuple[dict[str, dict[str, np.ndarray]], d
         else:
             print(f"{tool}: not measured on any test PR, skipped")
     return full, test_only
+
+
+def _tool_column(paths, key: str, ids):
+    values: dict[str, float] = {}
+    for path in paths:
+        if path.is_file():
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if line.strip():
+                    row = json.loads(line)
+                    if row.get(key) is not None:
+                        values[row["sample_id"]] = float(row[key])
+    if not values:
+        return None
+    return {s: np.array([values.get(i, np.nan) for i in ids[s]]) for s in SPLITS}
 
 
 def _markdown(results: dict) -> str:
@@ -292,10 +336,14 @@ def _markdown(results: dict) -> str:
                      f"{test['roc_auc']:.3f} | {test['precision_at_top_20pct']:.3f} | {test['accuracy']:.3f} | "
                      f"{test['f1']:.3f} ({entry['test_f1_95'][0]:.2f}-{entry['test_f1_95'][1]:.2f}) | "
                      f"{test['precision']:.3f} | {test['recall']:.3f} | {test['flagged_share']:.0%} |")
+    shown_gnn_subsets = set()
     for name, entry in results.get("test_subset_comparisons", {}).items():
         gnn = entry.get("gnn_same_prs")
-        for label, metrics in ((f"{name} (on {entry['test_prs']} test PRs)", entry["rule"]),
-                               (f"gnn (same {entry['test_prs']} PRs)", gnn)):
+        rows = [(f"{name} (on {entry['test_prs']} test PRs)", entry["rule"])]
+        if gnn and entry["test_prs"] not in shown_gnn_subsets:
+            shown_gnn_subsets.add(entry["test_prs"])
+            rows.append((f"gnn (same {entry['test_prs']} PRs)", gnn))
+        for label, metrics in rows:
             if metrics:
                 lines.append(f"| {label} | {metrics['pr_auc_average_precision']:.3f} | {metrics['roc_auc']:.3f} | "
                              f"{metrics['precision_at_top_20pct']:.3f} | {metrics['accuracy']:.3f} | {metrics['f1']:.3f} | "

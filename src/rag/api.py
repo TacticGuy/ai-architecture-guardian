@@ -99,7 +99,10 @@ class Chatbot:
         if self.version:
             path = self.root / "data/xai" / self.version / f"{sample_id.replace('/', '__').replace('#', '__')}.json"
             if path.is_file():
-                details["explanation"] = json.loads(path.read_text(encoding="utf-8"))
+                report = json.loads(path.read_text(encoding="utf-8"))
+                # v5 edge attributions have their own view (/api/v5/attributions); the v4 explorer
+                # only understands the v4 layer A/B/C format.
+                details["attribution_v5" if report.get("schema") == "attribution_v5/1" else "explanation"] = report
         return details
 
     def model_summary(self) -> str:

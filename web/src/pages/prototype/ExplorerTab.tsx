@@ -86,7 +86,12 @@ export default function ExplorerTab({ version }: { version: string }) {
             <pre className="overflow-x-auto whitespace-pre-wrap border-t border-border p-4 font-mono text-xs leading-5">{detail.card}</pre>
           </details>
 
-          {!explanation && <Notice>This PR has no XAI explanation yet. Run explain_prs.py with --split all to add it.</Notice>}
+          {!explanation && detail.has_attribution_v5 && (
+            <Notice>This PR's v5 edge-level explanation is in the Attribution tab.</Notice>
+          )}
+          {!explanation && !detail.has_attribution_v5 && (
+            <Notice>This PR has no XAI explanation yet. Run explain_prs.py with --split all to add it.</Notice>
+          )}
           {explanation && (
             <>
               <Panel title="Layer A: structure vs diff" caption="How much each input moved the score (logit units). They add up: base + structure + diff.">

@@ -131,7 +131,10 @@ def create_app(root: Path | None = None, llm_factory: Any = None) -> FastAPI:
         result: dict[str, Any] = {
             "sample_id": sample_id, "probability": details["probability"], "label": details["label"],
             "threshold": threshold, "correct": int(details["probability"] >= threshold) == details["label"],
-            "card": details["card"], "explained": bool(explanation), "explanation": None}
+            "card": details["card"], "explained": bool(explanation or details.get("attribution_v5")),
+            "explanation": None,
+            # v5 edge attributions are shown in the Attribution tab, not as the v4 layer A/B/C panels.
+            "has_attribution_v5": bool(details.get("attribution_v5"))}
         if explanation:
             graph = explanation.get("graph")
             result["explanation"] = {

@@ -21,6 +21,7 @@ export interface LayerCRow { File: string; Effect: number; "Touched by PR": stri
 export interface PrDetail {
   sample_id: string; probability: number; label: number; threshold: number; correct: boolean; card: string;
   explained: boolean;
+  has_attribution_v5?: boolean;
   explanation: null | {
     layer_a: LayerARow[]; layer_b: HunkRow[]; note: string;
     layer_c: null | { touched_total: number; untouched_total: number; files: LayerCRow[] };
