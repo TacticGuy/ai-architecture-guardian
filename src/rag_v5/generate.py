@@ -10,6 +10,17 @@ from .retrieval import load_cards, retrieve_by_signature, retrieve_by_text
 from .signature import signature
 
 
+def _complete_json(model: Any, system: str, user: str) -> str:
+    """Retry Groq's occasional server-side structured-JSON generation failure."""
+    for attempt in range(3):
+        try:
+            return model.complete(system, user)
+        except Exception as exc:
+            if "failed to generate json" not in str(exc).lower() or attempt == 2:
+                raise
+    raise RuntimeError("unreachable")
+
+
 def _default_llm() -> Any:
     from src.rag.llm import FallbackChat, GroqChat
 
@@ -73,7 +84,7 @@ def explain_pr(attribution: dict[str, Any], mode: str = "signature", llm: Any = 
     system, user = _prompt(attribution, retrieved)
     attempts = []
     for _ in range(2):
-        response = model.complete(system, user)
+        response = _complete_json(model, system, user)
         try:
             answer = json.loads(response)
             if not isinstance(answer, dict):

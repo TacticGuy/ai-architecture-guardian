@@ -65,6 +65,13 @@ def test_grounding_rejects_unknown_claims():
     assert len(issues) >= 3
 
 
+def test_grounding_rejects_malformed_collections_without_crashing():
+    issues = violations({"evidence": "edge", "principles": "SRP", "suggestion": "move it"}, sample(), [])
+    assert "Evidence must be a list" in issues
+    assert "Principles must be a list" in issues
+    assert "Suggestion must be an object" in issues
+
+
 class FakeLLM:
     def __init__(self, responses):
         self.responses = iter(responses)
@@ -87,6 +94,27 @@ def test_explain_retries_then_returns_grounded_json():
     assert result["verdict"] == "degrading"
     assert result["attempt_violations"][0]
     assert result["grounding_violations"] == []
+
+
+def test_explain_retries_transient_groq_json_generation_failure():
+    data = sample("low_risk")
+    good = {"verdict": "safe", "explanation": "The score is below the supplied threshold.",
+            "evidence": [], "principles": [],
+            "suggestion": {"refactoring": "None", "files": [], "steps": []},
+            "confidence_note": "This is a model output, not a probability."}
+
+    class FailOnce:
+        calls = 0
+
+        def complete(self, system, user):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("Groq error 400: Failed to generate JSON")
+            return json.dumps(good)
+
+    llm = FailOnce()
+    assert explain_pr(data, llm=llm)["verdict"] == "safe"
+    assert llm.calls == 2
 
 
 @pytest.mark.parametrize("mode", ["signature", "text", "none"])

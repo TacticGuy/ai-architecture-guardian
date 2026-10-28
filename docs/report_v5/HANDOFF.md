@@ -49,10 +49,11 @@ python scripts/rag_v5_evaluate.py --prepare-sheets
 This selects up to 20 predicted-degrading and 20 predicted-safe test PRs with seed 2026,
 writes readable sheets under `docs/eval_v5/sheets/`, and creates
 `docs/eval_v5/references_draft.json`. Complete every reference and relevant-principle list
-by hand after checking the real GitHub diff. Then replace/point `--references` at that file:
+by hand after checking the real GitHub diff. The completed 40-PR human reference set is in
+`docs/eval_v5/references.json`. Run:
 
 ```powershell
-python scripts/rag_v5_evaluate.py --references docs/eval_v5/references_draft.json
+python scripts/rag_v5_evaluate.py --references docs/eval_v5/references.json
 python scripts/rag_v5_survey.py
 ```
 
@@ -63,20 +64,17 @@ Copy `docs/eval_v5/survey_form.md` into Google Forms and keep
 python scripts/rag_v5_survey.py --responses path/to/real_responses.csv
 ```
 
-## Still blocked on external inputs
+## External follow-up
 
-1. No real `data/xai_v5/*.json` attribution files were present locally or on the fetched
-   `origin/update/dashboard` branch on 27 October 2026.
-2. The 40 reference explanations and relevant-principle labels must be written by humans
-   from those files and their real GitHub diffs.
-3. Live generation requires the user's Groq key. No key was created or committed.
-4. The survey must be sent to real respondents; their answers must not be synthesized.
-5. Harsha will add `data/rag_v5/` to `.gitignore` during integration; this branch intentionally
+1. Copy `docs/eval_v5/survey_form.md` into Google Forms, send it to real respondents, and
+   export the responses as CSV. No responses have been invented or included.
+2. Keep `data/rag_v5/survey_key.json` private when publishing the form.
+3. Harsha will add `data/rag_v5/` to `.gitignore` during integration; this branch intentionally
    leaves the existing `.gitignore` unchanged.
 
 ## Verification and known issues
 
-- All 26 focused v5 tests pass without network calls.
+- The final focused run passes: 70 tests passed and 1 was skipped, without network calls.
 - The 31 related existing future-coupling, structural-metric, global-edge, and v5 XAI tests
   also pass. The XAI tests required a temporary directory outside OneDrive because local Git
   references were intermittently locked inside the synchronized folder.
@@ -87,7 +85,13 @@ python scripts/rag_v5_survey.py --responses path/to/real_responses.csv
   grounding violations. The synthetic outputs were kept outside the repository.
 - A full repository `pytest -q` attempt stalled in the command runner without output and was
   interrupted after the Python process disappeared. This is not reported as a passing full suite.
-- BERTScore will download the `roberta-large` model on the first real evaluation run, so that
-  run needs network access and disk space.
+- The real v5 evaluation completed on 40 test PRs (20 predicted-degrading and 20 predicted-safe),
+  with 120 generated explanations. Results are in `data/rag_v5/eval/results.json`,
+  `results.md`, and `bertscore_f1.png`; the output folder is packaged as
+  `rag_v5_outputs.zip` for handover.
+- Signature retrieval achieved principle precision@3 of 0.108 versus 0.050 for text BM25 and
+  recall@3 of 0.125 versus 0.054. No paired BERTScore-F1 or ROUGE-L comparison was significant.
+- `transformers>=4.38,<5` is pinned because `bert-score==0.3.13` is incompatible with the
+  tokenizer API removed in Transformers 5.
 - The evaluation script rejects blank references and synthetic fixtures, preventing accidental
   publication of fabricated results.

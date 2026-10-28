@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import random
+import re
 import statistics
 import sys
 from pathlib import Path
@@ -14,6 +15,11 @@ from src.rag_v5.retrieval import load_cards
 
 ROOT = Path(__file__).resolve().parents[1]
 MODES = ("signature", "text", "none")
+
+
+def _catalogue_key(value: object) -> str:
+    """Normalize a catalogue id or display title for actionability matching."""
+    return re.sub(r"[^a-z0-9]+", "_", str(value).lower()).strip("_")
 
 
 def select_test_files(folder: Path, per_class: int = 20, seed: int = 2026) -> list[Path]:
@@ -82,19 +88,25 @@ def evaluate(references: list[dict], output: Path) -> dict:
                              for item in references):
         raise ValueError("Fill all hand-written references before evaluating; no synthetic or blank answers")
     cards = load_cards()
-    catalogue = {c["title"].lower() for c in cards if c["kind"] == "refactoring"}
-    records = []
+    catalogue = {_catalogue_key(value) for c in cards if c["kind"] == "refactoring"
+                 for value in (c["id"], c["title"])}
+    output.mkdir(parents=True, exist_ok=True)
+    checkpoint = output / "generation_checkpoint.json"
+    records = json.loads(checkpoint.read_text(encoding="utf-8")) if checkpoint.exists() else []
+    completed = {(record["sample_id"], record["mode"]) for record in records}
     for item in references:
         data = json.loads(Path(item["attribution_path"]).read_text(encoding="utf-8"))
         if data.get("_note") or data.get("split") != "test":
             raise ValueError(f"Not a real test-split sample: {item['sample_id']}")
         for mode in MODES:
+            if (item["sample_id"], mode) in completed:
+                continue
             answer = explain_pr(data, mode=mode)
             principles = {c["id"] for c in answer.get("retrieved_cards", [])}
             relevant = set(item.get("relevant_principles") or [])
             suggestion = answer.get("suggestion") or {}
             valid_file = bool(set(suggestion.get("files") or []) & set(data.get("changed_files") or []))
-            actionability = bool(valid_file and str(suggestion.get("refactoring", "")).lower() in catalogue)
+            actionability = bool(valid_file and _catalogue_key(suggestion.get("refactoring", "")) in catalogue)
             records.append({"sample_id": item["sample_id"], "mode": mode, "answer": answer,
                             "reference": item["reference_explanation"],
                             "evidence_summary": (
@@ -109,6 +121,18 @@ def evaluate(references: list[dict], output: Path) -> dict:
                             "grounded": not answer.get("grounding_violations") and answer.get("status") != "grounding_failed",
                             "violations": len(answer.get("grounding_violations") or []),
                             "actionable_fix": actionability})
+            checkpoint.write_text(json.dumps(records, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    # Recompute derived actionability when resuming an older checkpoint. This lets
+    # scorer fixes apply without making any additional LLM calls.
+    attribution_by_id = {item["sample_id"]: json.loads(Path(item["attribution_path"]).read_text(encoding="utf-8"))
+                         for item in references}
+    for record in records:
+        suggestion = record["answer"].get("suggestion") or {}
+        data = attribution_by_id[record["sample_id"]]
+        valid_file = isinstance(suggestion, dict) and bool(
+            set(suggestion.get("files") or []) & set(data.get("changed_files") or []))
+        record["actionable_fix"] = bool(
+            valid_file and _catalogue_key(suggestion.get("refactoring", "")) in catalogue)
     candidates = [r["answer"].get("explanation", "") for r in records]
     refs = [r["reference"] for r in records]
     p, recall, f1 = bert_score(candidates, refs, model_type="roberta-large", lang="en",
@@ -131,7 +155,6 @@ def evaluate(references: list[dict], output: Path) -> dict:
                 [r[metric] for r in records if r["mode"] == competitor])
     result = {"n_prs": len(references), "metrics": summary, "wilcoxon_p": paired, "per_pr": records,
               "limitations": "Model outputs and reference answers need human interpretation; score is not calibrated probability."}
-    output.mkdir(parents=True, exist_ok=True)
     (output / "results.json").write_text(json.dumps(result, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     lines = [f"# RAG v5 evaluation ({len(references)} real test PRs)", "", "| Metric | Signature | Text | None |",
              "|---|---:|---:|---:|"]

@@ -40,7 +40,7 @@ justified; the risk score is not presented as a calibrated probability.
 ## Evaluation design
 
 The reference set is drawn only from held-out projects. With a fixed random
-seed, we intend to select 20 predicted-degrading and 20 predicted-safe PRs.
+seed, we selected 20 predicted-degrading and 20 predicted-safe PRs.
 For each one, a human reviewer reads the attribution and the actual GitHub
 diff, then writes a reference explanation and smallest plausible fix, and
 marks relevant principle-card IDs. Generated outputs are not used to write
@@ -73,17 +73,30 @@ never synthesized.
 
 ## Results and limitations
 
-**Results pending real v5 attribution files and human references.** The
-evaluation script will write the following table after all three systems have
-run. Blank values are intentional and must not be filled from synthetic tests.
+The automatic evaluation used 40 real held-out v5 PRs and 120 generated
+explanations. Values below are means with 95% bootstrap intervals. Because
+BERTScore was rescaled against its baseline, negative values are possible and
+mean that similarity was below that baseline; they are not error values.
 
 | Metric | Signature | Text BM25 | No retrieval |
 |---|---:|---:|---:|
-| BERTScore F1, mean [95% CI] | pending | pending | pending |
-| ROUGE-L F1, mean [95% CI] | pending | pending | pending |
-| Principle precision@3 | pending | pending | pending |
-| Zero-violation grounding rate | pending | pending | pending |
-| Actionable-fix proxy | pending | pending | pending |
+| BERTScore F1, mean [95% CI] | -1.627 [-2.390, -0.864] | -1.903 [-2.781, -1.147] | -0.905 [-1.539, -0.281] |
+| ROUGE-L F1, mean [95% CI] | 0.115 [0.087, 0.142] | 0.107 [0.077, 0.135] | 0.134 [0.112, 0.156] |
+| Principle precision@3 | 0.108 [0.058, 0.167] | 0.050 [0.008, 0.092] | 0.000 [0.000, 0.000] |
+| Zero-violation grounding rate | 0.650 [0.500, 0.800] | 0.600 [0.425, 0.750] | 0.800 [0.675, 0.925] |
+| Actionable-fix proxy | 0.050 [0.000, 0.125] | 0.025 [0.000, 0.075] | 0.000 [0.000, 0.000] |
+
+Signature retrieval more than doubled principle precision@3 over text BM25
+(0.108 against 0.050) and also improved recall@3 (0.125 against 0.054). It did
+not outperform the no-retrieval baseline on explanation-similarity metrics.
+Paired Wilcoxon tests found no significant difference between signature and
+text or signature and no retrieval for BERTScore-F1 or ROUGE-L (all p-values
+were above 0.17). The no-retrieval system also had the highest zero-violation
+grounding rate. These results support the narrower claim that attributed graph
+signals improve retrieval of human-relevant principles over lexical BM25, not
+the broader claim that they make every generated explanation better. The blind
+human study is prepared but has no responses yet, so no Likert results are
+reported.
 
 There are several limits to what this study can establish. Attributions
 reflect model behavior, not necessarily causal reasons for future code
