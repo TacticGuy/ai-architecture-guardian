@@ -1,7 +1,7 @@
 """Write one explanation file per PR (``attribution_v5/1``) for the v5 GNN.
 
     python scripts/explain_coupling_v5.py --data-dir data/coupling_samples_v5 --clones data/repositories \
-        --checkpoint data/gnn_v5/seed_1/model.pt --output-dir data/xai_v5 --split-name test --limit 200
+        --checkpoint data/gnn_v5/seed_1/model.pt --output-dir data/xai/v5 --split-name test --limit 200
 
 For each chosen sample: re-analyse the PR's two commits (needed to know which edges the PR
 added and each module's coupling before/after), load the exact 3-hop graph the model scored,
@@ -168,7 +168,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--predictions", type=Path, default=None, help="predictions.csv next to the checkpoint")
     parser.add_argument("--split", type=Path, default=ROOT / "config/coupling_split_v5.json")
     parser.add_argument("--split-name", default="test", choices=["train", "validation", "test"])
-    parser.add_argument("--output-dir", type=Path, default=ROOT / "data/xai_v5")
+    parser.add_argument("--output-dir", type=Path, default=ROOT / "data/xai/v5")   # the web app reads this folder
     parser.add_argument("--limit", type=int, default=200)
     parser.add_argument("--only", nargs="*", help="explain exactly these sample ids")
     parser.add_argument("--steps", type=int, default=32)

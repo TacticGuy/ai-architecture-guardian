@@ -201,3 +201,15 @@ def test_ranking_metrics_roc_auc_and_top_20_percent_precision():
     assert metrics["precision_at_top_20pct"] == pytest.approx(0.5)     # top 2: 0.9 (risky), 0.8 (safe)
     assert metrics["accuracy"] == pytest.approx(0.8) and metrics["flagged_share"] == pytest.approx(0.3)
     assert binary_metrics([1, 0], [0.5, 0.5])["roc_auc"] == pytest.approx(0.5)
+
+
+def test_late_fusion_weight_comes_from_validation_and_can_ignore_a_useless_model():
+    import numpy as np
+    from scripts.compare_coupling_models import _late_fusion
+    labels = np.array([1, 0, 1, 0, 1, 0, 0, 0])
+    good = np.array([0.9, 0.2, 0.8, 0.3, 0.7, 0.1, 0.2, 0.3])
+    noise = np.array([0.1, 0.9, 0.2, 0.8, 0.3, 0.7, 0.9, 0.6])          # anti-correlated: must get no weight
+    gnn = {s: good for s in ("train", "validation", "test")}
+    diff = {s: noise for s in ("train", "validation", "test")}
+    alpha, fused = _late_fusion(gnn, diff, labels)
+    assert alpha == 1.0 and np.allclose(fused["test"], good, atol=1e-5)
