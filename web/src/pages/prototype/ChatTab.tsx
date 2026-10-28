@@ -22,7 +22,8 @@ function sessionId(): string {
   }
 }
 
-const suggestions = ["Why was PR #5648 flagged as risky?", "How well does the fusion model do on the test split?", "What is layer C?"];
+// Questions that work for every data version (a PR number or "layer C" only exists in some).
+const suggestions = ["How is a PR's label decided?", "How well does the fusion model do on the test split?", "What does the risk score mean?"];
 
 export default function ChatTab({ version }: { version: string }) {
   const [messages, setMessages] = useState<Message[]>([]);

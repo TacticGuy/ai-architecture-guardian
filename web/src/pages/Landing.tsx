@@ -1,6 +1,6 @@
 import {
-  ArrowRight, Bot, Braces, Cpu, FileCode2, GitPullRequest, Layers, Network, Orbit, Scale, ScanSearch, Server,
-  Sparkles, Wind, Workflow, Globe, Atom, FolderGit2, Sigma, Boxes, Lock, type LucideIcon,
+  ArrowRight, Bot, Braces, Cpu, FileCode2, GitPullRequest, History, Layers, Network, Orbit, Scale, ScanSearch,
+  Server, Sparkles, Gauge, Workflow, Globe, Atom, FolderGit2, Sigma, Boxes, Lock, type LucideIcon,
 } from "lucide-react";
 import { motion } from "framer-motion";
 import { useState, type ReactNode } from "react";
@@ -15,33 +15,45 @@ import { LoadingButton } from "@/components/ui/loading-button";
 const features = [
   {
     icon: <Network className="size-5" />, eyebrow: "Structure",
-    title: "Static dependency graphs",
+    title: "Validated dependency graphs",
     description:
-      "Python source is parsed with the AST, never executed. Modules, classes, functions and methods become a typed graph with CONTAINS, IMPORTS, CALLS and INHERITS edges and 15 explainable node features.",
+      "Python source is parsed with the AST, never executed. Modules, classes, functions, methods and module-level variables become a typed graph with CONTAINS, IMPORTS, CALLS, INHERITS and ACCESSES_GLOBAL edges, checked against PyCG and grimp.",
+  },
+  {
+    icon: <History className="size-5" />, eyebrow: "Target",
+    title: "Forward-looking labels",
+    description:
+      "A PR is labelled degrading when, in the six months after it is merged, the modules it touched gain dependencies faster than the rest of their project, or join a new import cycle. No one hand-labels it.",
   },
   {
     icon: <Orbit className="size-5" />, eyebrow: "Learning",
     title: "Heterogeneous GNN",
     description:
-      "A GraphSAGE encoder over the pre-PR graph pools the files a PR touches plus their one-hop neighbours into a 32-dimensional vector, so untouched repository state cannot dominate the score.",
+      "A GraphSAGE network reads the graph with the PR applied, pools the touched files and their neighbours, and adds 13 pre-merge history numbers. Its score is the mean of five trained seeds.",
   },
   {
     icon: <FileCode2 className="size-5" />, eyebrow: "Semantics",
     title: "Diff understanding",
     description:
-      "The production-code diff of each PR is embedded with the CodeReviewer encoder, giving the model a view of what changed alongside where it changed.",
+      "The production-code diff of each PR is embedded with the CodeReviewer encoder. Late fusion weighs it against the GNN, with the weight chosen on validation projects.",
   },
   {
-    icon: <Layers className="size-5" />, eyebrow: "Decision",
-    title: "Fusion classifier",
+    icon: <Scale className="size-5" />, eyebrow: "Rigour",
+    title: "Fair comparisons",
     description:
-      "Structure and diff embeddings are fused into one risk score. It is reported next to GNN-only, CodeReviewer-only and always-risky baselines, with bootstrap ranges.",
+      "6,141 PRs from 40 projects, with whole projects held out for testing. The GNN is reported next to always-risky, diff-only, history, CodeScene-style hotspot, radon, pylint and SonarQube baselines.",
   },
   {
     icon: <ScanSearch className="size-5" />, eyebrow: "Explainability",
-    title: "Three layers of XAI",
+    title: "Edge-level explanations",
     description:
-      "Layer A splits the score into structure and diff. Layer B hides each diff hunk and re-scores. Layer C uses Integrated Gradients on the GNN to rank the code files that mattered.",
+      "Integrated Gradients splits each score over the dependencies that produced it. The attribution graph shows which edges pushed the risk up or down, with a faithfulness check.",
+  },
+  {
+    icon: <Sparkles className="size-5" />, eyebrow: "Explanation",
+    title: "Explanations in plain words",
+    description:
+      "Design principles are retrieved by the attributed edges, not by the wording of a question. The LLM's explanation and fix are rejected if they cite an edge, principle or number that was not supplied.",
   },
   {
     icon: <Bot className="size-5" />, eyebrow: "Assistant",
@@ -53,13 +65,7 @@ const features = [
     icon: <GitPullRequest className="size-5" />, eyebrow: "Inference",
     title: "Live GitHub PR analysis",
     description:
-      "Paste a public pull request URL. The app builds its base graph, embeds the current diff and scores it with the trained models. Live reports are never added to training data.",
-  },
-  {
-    icon: <Scale className="size-5" />, eyebrow: "Rigour",
-    title: "Evidence-based labels",
-    description:
-      "A positive label needs a reviewed architectural event tied to the merge SHA, with a complete six-month follow-up window. Titles alone never decide a label, and unknown outcomes stay unknown.",
+      "Paste a public pull request URL, open, merged or closed. The app rebuilds the right before and after code, embeds the diff and scores it. Live reports are never added to training data.",
   },
 ];
 
@@ -68,11 +74,11 @@ const technologies = [
   { icon: <Atom className="size-7" />, title: "PyTorch", about: "Trains and runs the GNN encoder, the auxiliary classifier and the fusion model." },
   { icon: <Network className="size-7" />, title: "PyTorch Geometric", about: "Holds each repository as HeteroData and provides the heterogeneous GraphSAGE layers." },
   { icon: <Cpu className="size-7" />, title: "Transformers", about: "Loads Microsoft CodeReviewer to embed the diff of every pull request." },
-  { icon: <Globe className="size-7" />, title: "GitHub GraphQL API", about: "Collects pull request metadata and fetches live PRs through httpx." },
-  { icon: <Sparkles className="size-7" />, title: "Groq LLM", about: "Writes the chatbot's answers from retrieved knowledge-base cards only." },
-  { icon: <Server className="size-7" />, title: "FastAPI", about: "Serves model results, XAI layers, live analysis and chat to this interface." },
-  { icon: <Workflow className="size-7" />, title: "React", about: "Builds this interface, routed with React Router and animated with Framer Motion." },
-  { icon: <Wind className="size-7" />, title: "Tailwind CSS", about: "Styles both pages, including the light and dark themes." },
+  { icon: <Globe className="size-7" />, title: "GitHub API", about: "Fetches live pull requests and their merge commits through httpx." },
+  { icon: <Sparkles className="size-7" />, title: "Groq LLM", about: "Writes the chatbot's answers and the PR explanations from retrieved cards only." },
+  { icon: <Gauge className="size-7" />, title: "Code-quality tools", about: "radon, pylint and SonarQube scored every PR's touched files as industry baselines." },
+  { icon: <Server className="size-7" />, title: "FastAPI", about: "Serves model results, attributions, live analysis and chat to this interface." },
+  { icon: <Workflow className="size-7" />, title: "React", about: "Builds this interface with Tailwind CSS, React Router, Framer Motion and a force-directed graph view." },
 ];
 
 interface Step { icon: LucideIcon; title: string; detail: string }
@@ -82,18 +88,19 @@ const phases: { label: string; note: string; steps: Step[] }[] = [
     steps: [
       { icon: FolderGit2, title: "Clone repositories", detail: "Each repository is cloned and recorded with its HEAD commit." },
       { icon: Braces, title: "Parse with the AST", detail: "Modules, classes, functions, imports and calls, without executing code." },
-      { icon: Network, title: "Build the dependency graph", detail: "Typed nodes joined by CONTAINS, IMPORTS, CALLS and INHERITS edges." },
+      { icon: Network, title: "Build the dependency graph", detail: "Typed nodes joined by CONTAINS, IMPORTS, CALLS, INHERITS and ACCESSES_GLOBAL edges." },
       { icon: Sigma, title: "Compute node features", detail: "Size, complexity, parameters and degrees, named and inspectable." },
-      { icon: Boxes, title: "Convert to HeteroData", detail: "A fixed schema of 6 node types and 41 edge types for PyTorch Geometric." },
+      { icon: Boxes, title: "Convert to HeteroData", detail: "A fixed schema of 7 node types and 46 edge types for PyTorch Geometric." },
     ],
   },
   {
     label: "Learn and explain", note: "Scoring and explanation",
     steps: [
-      { icon: Orbit, title: "Encode structure", detail: "GraphSAGE pools the touched files and their neighbours into one vector." },
+      { icon: Orbit, title: "Encode structure", detail: "GraphSAGE pools the touched files and their neighbours, plus pre-merge history." },
       { icon: FileCode2, title: "Encode the diff", detail: "CodeReviewer embeds the production-code changes of the PR." },
-      { icon: Layers, title: "Fuse and score", detail: "One classifier combines both views into a risk score." },
-      { icon: ScanSearch, title: "Explain", detail: "Structure vs diff, influential hunks and influential files." },
+      { icon: Layers, title: "Fuse and score", detail: "Late fusion turns both views into one risk score." },
+      { icon: ScanSearch, title: "Attribute", detail: "Integrated Gradients ranks the dependencies behind the score." },
+      { icon: Sparkles, title: "Explain in words", detail: "Principles retrieved by those edges, and an LLM answer checked against them." },
     ],
   },
 ];
@@ -149,15 +156,16 @@ export default function Landing() {
               initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6, delay: 0.08 }}
               className="chroma-text chroma-text-animate mb-[calc(1rem-0.25em)] max-w-[640px] text-balance pb-[0.25em] pt-[0.12em] font-spectral text-[30px] font-light capitalize leading-[0.95] tracking-[-0.09em] sm:text-[42px] lg:max-w-[760px] lg:text-[54px] lg:leading-[51px] lg:tracking-[-3px]"
             >
-              Know which pull requests will need an architectural refactor.
+              Know which pull requests will tangle your architecture.
             </motion.h1>
             <motion.p
               initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6, delay: 0.16 }}
               className="mt-6 max-w-2xl text-lg leading-8 text-muted-foreground"
             >
-              AI Architecture Guardian predicts whether a merged Python PR touches code that will need an
-              architectural refactor within six months, and explains why. It combines a graph neural network over
-              the repository's dependency structure with a transformer's reading of the diff.
+              AI Architecture Guardian predicts, before a Python PR is merged, whether the code it touches will
+              become more tightly coupled over the next six months, and explains why. A graph neural network reads
+              the repository's dependency structure, Integrated Gradients points to the dependencies behind the
+              score, and a grounded LLM explains them with design principles.
             </motion.p>
             <motion.div
               initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6, delay: 0.24 }}
@@ -181,7 +189,7 @@ export default function Landing() {
 
         <Section
           id="how" eyebrow="Pipeline" title="From source code to an explained score"
-          intro="A locked static-analysis pipeline turns each repository into a graph. The models then read that graph together with the PR diff, score the risk and explain the result."
+          intro="A locked static-analysis pipeline turns each repository into a graph. The models then read that graph together with the PR diff and its recent history, score the risk, trace it to individual dependencies and explain it."
         >
           <div className="grid gap-6 lg:grid-cols-[5fr_4fr]">
             {phases.map((phase, phaseIndex) => (
@@ -275,15 +283,29 @@ export default function Landing() {
             <div className="rounded-2xl border border-border bg-card p-6">
               <h3 className="font-semibold tracking-tight">An outcome proxy</h3>
               <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                The target is a future architectural refactor in the area a PR touched. A later overlapping refactor
-                does not prove the earlier PR caused architectural debt.
+                The label measures how the touched modules' coupling grows in the six months after the merge. Other
+                PRs merged in that time change those modules too, so a degrading label does not prove this PR caused it.
               </p>
             </div>
             <div className="rounded-2xl border border-border bg-card p-6">
               <h3 className="font-semibold tracking-tight">Uncalibrated scores</h3>
               <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                The risk percentage is the model score times 100, not a validated probability. With few test PRs,
-                read the bootstrap ranges rather than single numbers, and compare against the always-risky baseline.
+                The risk percentage is the model score times 100, not a validated probability. Read the bootstrap
+                ranges rather than single numbers, and compare against the always-risky baseline and the industry tools.
+              </p>
+            </div>
+            <div className="rounded-2xl border border-border bg-card p-6">
+              <h3 className="font-semibold tracking-tight">Static analysis has blind spots</h3>
+              <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                Dynamic imports, reflection and calls through values in containers are invisible to the AST. Measured
+                against PyCG, the graph's call edges are precise but miss calls that only value tracking can find.
+              </p>
+            </div>
+            <div className="rounded-2xl border border-border bg-card p-6">
+              <h3 className="font-semibold tracking-tight">Explanations describe the model</h3>
+              <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                Edge attributions show what drove the model's score, not the real cause of later coupling growth.
+                Suggested fixes are starting points for a reviewer, not verified refactorings.
               </p>
             </div>
           </div>
@@ -298,7 +320,8 @@ export default function Landing() {
               See it work on real pull requests
             </motion.h2>
             <p className="mt-4 max-w-lg leading-7 text-muted-foreground">
-              Browse model results, open the explanation of any PR, analyse a live GitHub PR, or ask the chatbot.
+              Browse model results, trace a PR's score to the dependencies behind it, analyse a live GitHub PR, or
+              ask the chatbot.
             </p>
             <LoadingButton size="lg" loading={opening} onClick={openPrototype} className="mt-8 h-12 gap-2 px-8 text-base">
               {opening ? "Loading prototype" : <>Open the prototype <ArrowRight className="ml-2 size-4" /></>}

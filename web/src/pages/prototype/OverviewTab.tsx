@@ -42,7 +42,7 @@ export default function OverviewTab({ version }: { version: string }) {
 
       <Panel
         title="Model results on the test split"
-        caption="Threshold picked on validation (best F1). Ranges are bootstrap 95% ranges: with few test PRs, read the ranges, not single numbers."
+        caption="Threshold picked on validation (best F1). Ranges are bootstrap 95% ranges: read the ranges, not single numbers."
       >
         <DataTable rows={data.results} />
       </Panel>
@@ -56,8 +56,9 @@ export default function OverviewTab({ version }: { version: string }) {
           {/* v5 has 1,375 test PRs: keep the panel a fixed height and scroll inside it. */}
           <ul className="max-h-[28rem] space-y-2 overflow-y-auto overscroll-contain pr-2">
             {data.scores.map((row) => (
-              <li key={row.sample_id} className="grid grid-cols-[3.5rem_1fr_3.5rem] items-center gap-3" title={`${row.sample_id}: predicted ${row.Prediction}, correct: ${row.Correct}`}>
-                <span className="text-sm tabular-nums">{row.PR}</span>
+              <li key={row.sample_id} className="grid grid-cols-[minmax(0,8rem)_1fr_3.5rem] items-center gap-3" title={`${row.sample_id}: predicted ${row.Prediction}, correct: ${row.Correct}`}>
+                {/* Repository name + number ("rich#62"): with 40 projects, the number alone is ambiguous. */}
+                <span className="truncate font-mono text-xs tabular-nums">{row.sample_id.split("/").pop()}</span>
                 <div className="relative h-3.5 rounded-sm bg-muted">
                   <div
                     className={`absolute inset-y-0 left-0 rounded-sm transition-[width] duration-700 ${row["True label"].startsWith("risky") ? "bg-risky" : "bg-safe"}`}

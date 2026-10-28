@@ -22,9 +22,11 @@ interface Edge {
 interface ModuleEvidence { ca_before: number; ce_before: number; ca_after: number; ce_after: number; in_import_cycle: boolean }
 interface Hunk { file: string; lines: [number, number]; effect: number; snippet: string[] }
 interface Explanation {
-  verdict: string; explanation: string; evidence?: { edge: string; why: string }[]; principles?: string[];
-  suggestion?: { refactoring?: string; files?: string[]; steps?: string[]; code_sketch?: string };
+  verdict?: string; explanation?: string; evidence?: { edge: string; why: string }[]; principles?: string[];
+  suggestion?: { refactoring?: string | null; files?: string[]; steps?: string[]; code_sketch?: string | null };
   confidence_note?: string;
+  // Written by src/rag_v5 (explain_pr): which cards were retrieved and why, and the grounding check.
+  mode?: string; status?: string; retrieved_cards?: { id: string; reason: string }[]; grounding_violations?: string[];
 }
 interface Attribution extends AttributionSummary {
   merged_at: string | null; label_reason: string | null;
@@ -331,8 +333,22 @@ function Hunks({ hunks }: { hunks: Hunk[] }) {
   );
 }
 
+const RETRIEVAL_MODES: Record<string, string> = {
+  signature: "principles retrieved by the attributed edges",
+  text: "principles retrieved by the PR title and diff text",
+  none: "no principles retrieved",
+};
+
 function ExplanationView({ explanation }: { explanation: Explanation | null }) {
   if (!explanation) return <p className="text-sm text-muted-foreground">No explanation generated yet.</p>;
+  if (explanation.status === "grounding_failed" || !explanation.explanation) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        The generated explanation failed the grounding check (it cited an edge, principle or number that was not in
+        the evidence), so it is not shown.
+      </p>
+    );
+  }
   const suggestion = explanation.suggestion;
   return (
     <div className="space-y-5 text-sm leading-6">
@@ -341,6 +357,18 @@ function ExplanationView({ explanation }: { explanation: Explanation | null }) {
         {explanation.principles?.map((principle) => <Chip key={principle}>{principle}</Chip>)}
       </div>
       <Markdown text={explanation.explanation} />
+      {!!explanation.retrieved_cards?.length && (
+        <div>
+          <h4 className="text-sm font-semibold">Why these principles were retrieved</h4>
+          <ul className="mt-2 space-y-1.5">
+            {explanation.retrieved_cards.map((card) => (
+              <li key={card.id} className="text-xs text-muted-foreground">
+                <span className="font-mono text-foreground">{card.id}</span>: {card.reason}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       {!!explanation.evidence?.length && (
         <div>
           <h4 className="text-sm font-semibold">Evidence</h4>
@@ -365,6 +393,12 @@ function ExplanationView({ explanation }: { explanation: Explanation | null }) {
         </div>
       )}
       {explanation.confidence_note && <p className="text-xs text-muted-foreground">{explanation.confidence_note}</p>}
+      {explanation.mode && (
+        <p className="text-xs text-muted-foreground">
+          Generated with {RETRIEVAL_MODES[explanation.mode] ?? explanation.mode}. Passed the grounding check: every
+          cited edge, principle and number is in the evidence the model was given.
+        </p>
+      )}
     </div>
   );
 }

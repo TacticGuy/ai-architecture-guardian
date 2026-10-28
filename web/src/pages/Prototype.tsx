@@ -34,7 +34,7 @@ export default function Prototype() {
       .then((result) => {
         setVersions(result.versions);
         setVersion(result.default ?? undefined);
-        if (!result.default) setError("No knowledge base found. Run: python scripts/build_kb.py --manifest artifacts/gnn_embeddings_v3.json");
+        if (!result.default) setError("No knowledge base found. Build one with: python scripts/build_kb.py --manifest artifacts/gnn_embeddings_<version>.json");
       })
       .catch((exc: Error) => setError(exc.message));
   }, []);
@@ -49,8 +49,8 @@ export default function Prototype() {
               <p className="font-mono text-xs uppercase tracking-[0.08em] text-muted-foreground">Prototype</p>
               <h1 className="mt-2 text-3xl font-semibold tracking-tight sm:text-4xl">AI Architecture Guardian</h1>
               <p className="mt-3 leading-7 text-muted-foreground">
-                Predicts whether a merged Python PR touches code that will need an architectural refactor within six
-                months, and explains why.{" "}
+                Predicts, before a Python PR is merged, whether the code it touches will become more tightly coupled
+                over the next six months, and explains why.{" "}
                 <Link to="/" className="underline underline-offset-4 hover:text-foreground">About the project</Link>
               </p>
             </div>
