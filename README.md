@@ -1,726 +1,408 @@
-# AI Architecture Guardian — PR Graphs and GNN Risk Prediction
+# AI Architecture Guardian
 
-This repository implements flowchart points **1–5** and a GNN encoder, training
-command, inference command and embedding exporter for **6–8**. The historical
-dataset and evaluation are being corrected before the next training run.
+AI Architecture Guardian predicts, **before a Python pull request (PR) is merged**, whether it
+will make the code base more tightly coupled over the following six months, and explains why.
 
-The locked static-analysis pipeline is:
+* **Input:** the repository's dependency graph with the PR applied, and the PR's diff.
+* **Output:** a risk score, the dependencies (graph edges) that pushed the score up or down, and
+  a plain-English explanation with a suggested minimal fix.
+
+The graph is built from source with Python's `ast` module (no code is executed). A heterogeneous
+graph neural network (GNN) scores it, Integrated Gradients attributes the score to edges, and a
+retrieval-augmented LLM turns the attributed subgraph into an explanation grounded in design
+principles. A React + FastAPI web app shows all of it, including live GitHub PRs.
+
+The current version is **v5** (v5.1 for the final model). Earlier versions are summarised in
+[Earlier versions](#earlier-versions-v3-and-v4).
+
+## Contents
+
+* [Results at a glance (v5)](#results-at-a-glance-v5)
+* [How it works](#how-it-works)
+* [Setup](#setup)
+* [Run the web app](#run-the-web-app)
+* [Live GitHub PR analysis](#live-github-pr-analysis)
+* [Static analysis: points 1–5](#static-analysis-points-15)
+* [The v5 dataset and label](#the-v5-dataset-and-label)
+* [Train, compare and explain (v5 pipeline)](#train-compare-and-explain-v5-pipeline)
+* [Explanations with RAG](#explanations-with-rag)
+* [Graph validation and tool baselines](#graph-validation-and-tool-baselines)
+* [Tests](#tests)
+* [Repository layout](#repository-layout)
+* [Limitations](#limitations)
+* [Earlier versions (v3 and v4)](#earlier-versions-v3-and-v4)
+
+## Results at a glance (v5)
+
+**Dataset:** 6,141 merged PRs from 40 open-source Python projects. Whole projects are held out:
+24 for training (3,576 PRs), 7 for validation (1,190) and 9 for testing (1,375; 519 degrading).
+
+**Models on the 9 held-out test projects** (threshold chosen on validation, best F1):
+
+| Model | F1 | PR-AUC | ROC-AUC | Precision in top 20% |
+|---|---:|---:|---:|---:|
+| Always risky (baseline) | 0.548 | 0.377 | 0.500 | 0.185 |
+| CodeReviewer on the diff only | 0.550 | 0.403 | 0.545 | 0.429 |
+| **GNN (ours, mean of 5 seeds)** | **0.604** | **0.632** | 0.721 | **0.687** |
+| Fusion (GNN + CodeReviewer) | 0.604 | 0.632 | 0.721 | 0.687 |
+
+Bootstrap 95% ranges for the GNN: F1 0.571–0.635, PR-AUC 0.589–0.672. Validation gave
+CodeReviewer a fusion weight of 0, so fusion equals the GNN.
+
+**Against 16 comparison models** on the same split (`artifacts/gnn_metrics_v5.json`), the GNN has the
+highest PR-AUC. The closest are the CodeScene-style hotspot (0.616) and the pre-merge history
+features (0.609). History has a slightly higher ROC-AUC (0.739) than the GNN. SonarQube (0.502),
+pylint (0.391) and radon (0.391) score lower, as does a SonarQube-style "flag any added debt" rule
+(0.384). See [Graph validation and tool baselines](#graph-validation-and-tool-baselines).
+
+**Explanations** (34 held-out PRs, three systems): retrieving design principles from the attributed
+graph signature gives the best BERTScore F1 (0.137, against 0.113 for text retrieval and 0.101
+with no retrieval; p = 0.041 against no retrieval) and the best principle precision@3 (0.118
+against 0.029). A blind developer survey is prepared; no responses are reported yet.
+
+The risk score is a model output between 0 and 1, **not a calibrated probability**.
+
+## How it works
 
 ```text
-1. Clone and store Python repositories
-2. Parse Python source with AST
-3. Build a static dependency graph
-4. Create explainable node features
-5. Convert each graph to PyTorch Geometric HeteroData
+Clone repository ─► AST facts ─► typed dependency graph ─► node features ─► PyG HeteroData   (points 1–5)
+                                                                                 │
+merged PR ─► before / after snapshots ─► future-coupling label (6 months later)  │
+          ─► pre-merge history features ──────────────────────────────┐         │
+          ─► diff ─► CodeReviewer embedding ─┐                         ▼         ▼
+                                             └──► late fusion ◄── heterogeneous GraphSAGE GNN
+                                                       │
+                     Integrated Gradients on edges ◄───┘ risk score
+                                 │
+          attributed subgraph ─► evidence signature ─► design-principle retrieval ─► grounded LLM explanation
 ```
 
-The repository also includes PR scraping, historical Git snapshots, structural
-graph comparisons, reviewed future-refactor labeling and GNN risk scores.
-CodeBERT, fusion, XAI, RAG and LLM remediation are not implemented in this
-branch. The web interface is described under [Web app](#web-app).
+## Setup
 
-The existing 107-sample checkpoint is a development model. Its dataset has
-repository, year and refactor-event concentration. Its randomly split metrics
-do not establish predictive value. Corrected labels, temporal evaluation and
-baseline comparisons are required before reporting a final result.
-
-## Architecture
-
-```text
-repositories.json → GitHub GraphQL → raw PR JSONL → filtering
-                                                  ↓
-config/repositories.json → Git clone → AST facts → dependency graph → node features → PyG HeteroData
-```
-
-- The GitHub path stores merged PR metadata and applies the configured impact/keyword filters.
-- The static-analysis path clones configured repositories, parses source without importing or executing it, creates typed graph nodes/edges, and writes deterministic numeric features.
-- Every clone is recorded with its HEAD commit in a manifest. Every analysis artifact is JSON and is atomically written.
-
-## Static-analysis outputs
-
-For a cloned repository such as `django/django`, the project creates:
-
-```text
-data/repositories/django/django/               local Git clone
-data/repositories/clone_manifest.json          clone URL, HEAD commit, branch, timestamp
-data/analysis/django__django/ast.json          AST symbols, imports, calls, parse errors
-data/analysis/django__django/dependency_graph.json
-data/analysis/django__django/node_features.json
-data/pyg/django__django/graph.pt               PyTorch Geometric HeteroData (point 5)
-```
-
-These runtime files are deliberately Git-ignored: clones can be large and analysis output is reproducible.
-
-### AST extraction (point 2)
-
-The parser recursively finds eligible `.py` files and never executes repository code. It records:
-
-- module, class, function, and method nodes;
-- source path and line range;
-- class base names;
-- imports;
-- static call names;
-- function parameter counts;
-- McCabe-style cyclomatic complexity;
-- docstring and async flags;
-- parse errors without failing the entire repository.
-
-By default it skips test directories, common virtual environment/build/cache directories, `docs/`, `doc/`, `examples/` and `benchmarks/` folders, and `setup.py`/`conftest.py` files, so the graph describes the library itself. This is configurable under `static_analysis` in [config/settings.json](config/settings.json) (`excluded_directory_names`, `excluded_file_names`).
-
-### Dependency graph (point 3)
-
-`dependency_graph.json` contains typed nodes and these directed edges:
-
-- `CONTAINS`: module → class/function and class → method;
-- `IMPORTS`: a symbol scope → imported local/external module;
-- `CALLS`: a symbol scope → locally resolved or external callable;
-- `INHERITS`: a class → its parent class (project class, or an external class stored as an `external_callable` node). Built-in parents such as `object` or `Exception` are skipped.
-
-Resolution is intentionally conservative. Ambiguous call names remain external nodes rather than being guessed.
-
-### Node features (point 4)
-
-Each graph node has named, ordered feature values in `node_features.json`:
-
-- node type;
-- lines of code;
-- parameter counts;
-- vararg/keyword-argument flags;
-- cyclomatic complexity;
-- docstring/async flags;
-- base-class count;
-- total, import, call, and containment in/out degrees.
-
-The artifact includes both `feature_names` and a `features` mapping, so features are inspectable before any later ML conversion.
-
-### PyTorch Geometric graphs (point 5)
-
-`src/ml/hetero_data.py` converts `dependency_graph.json` + `node_features.json` into a PyTorch Geometric `HeteroData` object, saved as `data/pyg/<owner>__<name>/graph.pt`. The schema is fixed, so graphs from different repositories or commits can be batched together:
-
-- **6 node types**, always present (possibly empty): `module`, `class`, `function`, `method`, `external_module`, `external_callable`.
-- Each node type has `x`, a float32 tensor `[num_nodes, 15]` (columns listed in `data.feature_names`; the `node_type` column is dropped because the store already gives the type), and `node_ids`, the original node IDs in row order for mapping results back to code.
-- **41 edge types**, always present (possibly empty), named `(source type, relation, target type)` such as `("module", "IMPORTS", "module")`, `("method", "CALLS", "function")` and `("class", "INHERITS", "class")`. Each has `edge_index`, an int64 tensor `[2, num_edges]`.
-- Values are raw (not scaled) and no reverse edges are added: both are training choices for the GNN step.
-
-Load a saved graph with `src.ml.hetero_data.load_hetero_data(path)`. PyTorch 2.6+ needs `weights_only=False` for `HeteroData`, which this helper sets, so only load `.pt` files this project created.
-
-## Requirements and setup
-
-Use Python 3.10+ (Python 3.11 is preferred), Git on your `PATH`, and a GitHub Personal Access Token only if you will use the GraphQL scraper.
-
-Windows PowerShell:
+You need Python 3.10+ (3.11 preferred), Git on your `PATH`, and Node.js for the web app.
 
 ```powershell
 py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+pip install -r requirements.txt -r requirements-validation-v5.txt
+pip install scikit-learn scipy krippendorff matplotlib rouge-score
 Copy-Item .env.example .env
+cd web; npm install; cd ..
 ```
 
-Set `GITHUB_TOKEN=` in `.env` only for GitHub metadata scraping. Repository cloning uses public `https://github.com/owner/name.git` URLs and does not read the token.
+* `scikit-learn` is used by `scripts/compare_coupling_models.py`. `scipy` and `krippendorff`
+  are used by the survey analysis.
+* `requirements-rag-v5.txt` (BERTScore) pins `transformers<5`. Install it in a **separate**
+  environment, only if you re-run the RAG evaluation, so the main app's `transformers` is not
+  downgraded.
+* PyCG, used only by the graph validation, needs Python 3.8–3.10 in its own environment.
 
-## Run and test points 1–5
+`.env` keys (never commit them):
 
-First run the offline test suite:
+| Key | Needed for |
+|---|---|
+| `GROQ_API_KEY` | the chatbot and RAG explanations |
+| `GITHUB_TOKEN` | the GitHub API: PR scraping, and a higher rate limit for live PRs |
+| `SONAR_TOKEN` | SonarQube baseline runs only |
+
+## Run the web app
+
+Two terminals, from the repository root:
 
 ```powershell
-python -m pytest tests -v
-```
-
-Clone one repository:
-
-```powershell
-python scripts/clone_repositories.py --repo django/django
-```
-
-Analyse that clone through points 2–4:
-
-```powershell
-python scripts/analyse_repositories.py --repo django/django
-```
-
-Convert the analysis to a PyTorch Geometric graph (point 5):
-
-```powershell
-python scripts/build_pyg_graphs.py --repo django/django
-```
-
-Inspect the outputs:
-
-```powershell
-Get-Content data/repositories/clone_manifest.json
-Get-Content data/analysis/django__django/ast.json
-Get-Content data/analysis/django__django/dependency_graph.json
-Get-Content data/analysis/django__django/node_features.json
-```
-
-To process every enabled repository:
-
-```powershell
-python scripts/clone_repositories.py --all
-python scripts/analyse_repositories.py --all
-python scripts/build_pyg_graphs.py --all
-```
-
-Existing clones are left unchanged by default. Update them only explicitly:
-
-```powershell
-python scripts/clone_repositories.py --all --update
-```
-
-To analyse a local repository that is not in `repositories.json`:
-
-```powershell
-python scripts/analyse_repositories.py --path C:\path\to\repository
-```
-
-Add `--include-tests` if test code must become part of the graph.
-
-## Existing PR-metadata workflow
-
-With `GITHUB_TOKEN` set:
-
-```powershell
-python scripts/test_github_connection.py
-python scripts/scrape_prs.py --repo django/django --max-prs 10
-python scripts/filter_prs.py
-python scripts/generate_statistics.py
-python scripts/validate_dataset.py
-```
-
-Use `--resume` to continue a metadata scrape from its saved cursor. See `--help` on every script for arguments.
-
-## Limits
-
-Static analysis is syntactic and static: it cannot fully resolve dynamic imports,
-reflection, monkey patching, or all attribute calls. It deliberately does not
-execute target code. Each Step-5 graph represents a repository snapshot. The
-historical dataset builder adds PR metadata and touched-node masks outside the
-locked pipeline.
-
-## GNN workflow and current status
-
-The current builder creates this input for each historical PR:
-
-```text
-PR merge SHA → first-parent base snapshot → locked Steps 2–5
-             → heterogeneous graph + touched-node masks
-             → GraphSAGE → pooling → graph embedding → auxiliary classifier
-
-PR base/merge diff → diff.patch → future CodeBERT encoder
-```
-
-The encoder uses two heterogeneous GraphSAGE message-passing layers by default.
-V4 defaults to `touched_1hop` pooling: it pools only nodes in files touched by
-the PR plus their immediate graph neighbours. With `hidden_channels=32`, this
-produces a **32-dimensional vector per PR**. This replaces the V3 whole-repository
-plus touched-node concatenation, whose integrated-gradient audit showed that
-untouched repository state could dominate predictions. Old checkpoints remain
-loadable through the explicit `repo_plus_touched` compatibility mode.
-
-Training also reports deliberately weak shortcut baselines using merge date,
-repository size, touched-file statistics and repository identity. A GNN that
-does not beat these baselines has not demonstrated that it learned structural
-change risk. These features are evaluation controls; they are not supplied to
-the GNN.
-
-The existing input is the **before-PR graph**. Choosing candidate/head graphs or
-paired base/candidate graphs to represent the proposed architectural change is
-still pending. That input contract must be frozen before building the final
-dataset and training both GNN and fusion. Future outcome evidence belongs in
-labels and audit metadata, never in graph features or the diff encoder input.
-
-| Flowchart area | Current branch |
-| --- | --- |
-| 1–5: AST, dependency graph, node features, HeteroData | Implemented; locked |
-| Historical Git snapshots, diffs, graph metrics | Implemented |
-| Reviewed outcomes and coverage validation | Implemented; real coverage/reviews still required |
-| 6–8: heterogeneous GNN, pooling, embedding | Implemented |
-| 9: Python PR diff artifacts | Implemented |
-| 10–11: CodeBERT and code embedding | Teammate work; not integrated |
-| 12: fusion classifier | Pending |
-| 13: score for a prepared graph | Implemented; current model is a smoke model |
-| New PR/branch preparation command | Pending |
-| 14–18: XAI, attributed subgraph, KB, RAG, explanation | Pending |
-| Web app (React front end, FastAPI back end) | Implemented |
-| Benchmark comparisons | Pending |
-
-## Prediction target and label evidence
-
-The current target is a future **architectural refactor in the area touched by
-the PR**, observed during the following six calendar months. It is an outcome
-proxy. A later file-overlapping refactor does not prove that the earlier PR
-caused architectural debt.
-
-Protocol v3 requires:
-
-1. A completed collection covering the sample's entire six-month future window.
-2. A reviewed architectural event tied to the exact merge SHA and production
-   Python files, with a rationale and evidence references, for a positive label.
-3. No unresolved overlapping production-Python PRs during that window for a
-   negative label.
-4. Complete follow-up for both classes. An early observed positive is censored
-   until its six-month window is complete, just like a potential negative.
-5. Unknown labels for missing coverage, unresolved reviews or failed outcome-file
-   extraction. These records cannot become training negatives.
-
-PR titles and messages may help find review candidates. They cannot make a PR
-positive or negative. A review must explain the architectural change using the
-integrated Git diff. A positive event must demonstrate a movement or
-consolidation of production responsibility, a module or dependency-direction
-redesign, an inheritance redesign, or a state-ownership redesign. Features,
-bug fixes, typing-only edits, releases, ordinary renames and packaging-path
-moves are not positive events. Recording a rationale provides traceability; it
-does not independently prove the review is correct.
-
-V4 review work is prioritized by how many currently unknown sample outcomes a
-diff can unlock. Priority never assigns a label and never uses a title as ground
-truth:
-
-```powershell
-python scripts/prepare_review_queue.py --label-audit data/statistics/v4/click_future_refactor_audit_v4.jsonl --history-audit data/statistics/v4/pallets__click_history_audit.jsonl --event-reviews data/labels/click_event_reviews.jsonl --output data/statistics/v4/click_review_queue_v4.jsonl
-```
-
-The original impact/semantic filtering scripts are useful for candidate discovery
-and statistics. Their output is not final risk ground truth. Small two-file
-architectural changes must not be discarded solely by the impact filter.
-
-## Coverage and review files
-
-The label command needs `--coverage` and `--event-reviews`. It stops without
-changing outputs when either is missing.
-
-The coverage file describes completed repository intervals:
-
-```json
-{
-  "schema_version": 1,
-  "repositories": [
-    {
-      "repo": "owner/repo",
-      "window_start": "2020-01-01T00:00:00Z",
-      "window_end": "2025-12-31T23:59:59Z",
-      "pagination_completed": true,
-      "source": "github_repository_pull_requests",
-      "order": "CREATED_AT_ASC",
-      "completion_reason": "connection_exhausted",
-      "collected_pr_ids": ["owner/repo#123"]
-    }
-  ]
-}
-```
-
-This is a schema example, not evidence for a real repository. In date-window
-mode the collector generates the ID list, saves each completed page's cursor
-in the manifest, and marks completion only after exhausting pagination or
-passing the creation-date boundary. Min/max timestamps or a manually toggled
-completion flag cannot establish collection coverage.
-
-The date-window mode uses a GitHub repository connection ordered by creation
-time, then filters each PR by merge date. This includes long-lived PRs opened
-before the requested window. The legacy capped scrape still uses update order
-and does not certify a historical interval. See [GitHub's GraphQL repository
-reference](https://docs.github.com/en/graphql/reference/repos).
-
-For example, collect the Flask pilot interval and its future outcome history:
-
-```powershell
-python scripts/scrape_prs.py --repo pallets/flask --window-start 2020-01-01T00:00:00Z --window-end 2026-10-10T23:59:59Z --verbose
-```
-
-Outputs are `data/raw/raw_prs_v2.jsonl` and `data/raw/coverage_v2.json`. The
-manifest doubles as the resumable checkpoint. Re-run the same command after
-an interruption; it continues from the last persisted page. Use `--max-pages 1`
-for a partial API check: its coverage stays incomplete and the command returns
-a non-success exit code until the window is finished. Sequential repository
-runs with the same bounds can append to the same file pair. Do not run concurrent
-collectors against those files.
-
-`--fresh` in window mode restarts only that repository's traversal, preserving
-raw data and other repository coverage. For different bounds on a repository
-already present in the manifest, choose a new `--raw-output`/`--coverage` file
-pair. Commit-message bodies are deliberately not paginated in window mode;
-`commit_metadata_complete` stays false. Architectural reviews use actual diffs
-and structural evidence rather than those messages. Base branch name, head SHA,
-merge SHA and commit count are retained for subsequent snapshot validation.
-
-The Flask pilot completed on 2026-10-11 with 645 unique PR records in this window,
-640 with six-month follow-up by date, and no missing merge SHAs. These are
-metadata counts, not reviewed training labels or built graphs. The data includes
-default and release branches; branch/commit ancestry must be checked before
-matching future outcomes across PRs. Branch names alone cannot resolve renames
-such as `master` to `main`.
-
-The review JSONL has one object per reviewed PR. An approved event has:
-
-```json
-{
-  "sample_id": "owner/repo#123",
-  "merge_commit_sha": "FULL_SHA_FROM_THE_COLLECTED_PR",
-  "decision": "architecture_refactor",
-  "reviewer": "reviewer-identifier",
-  "rationale": "Describe the demonstrated architectural change",
-  "evidence_refs": ["diff-or-structural-evidence-reference"],
-  "affected_python_files": ["src/package/service.py"]
-}
-```
-
-Other decisions are `non_architectural` and `uncertain`. A non-architectural
-decision also requires a reviewer, rationale and evidence references. Missing
-reviews and uncertain decisions remain unresolved. An affected file must be in
-the production-Python paths actually changed at the reviewed commit.
-
-## Corrected dataset and training commands
-
-Run commands from the repository root with the virtual environment active.
-The following corrected workflow is conditional on completed coverage and real
-outcome reviews. Finishing a metadata scrape does not establish those reviews
-or the final training labels.
-
-```powershell
-python scripts/label_future_refactors.py --repo pallets/flask --coverage data/raw/coverage_v2.json --event-reviews data/labels/flask_event_reviews.jsonl
-python scripts/build_future_pr_dataset.py
-```
-
-New outputs are separate from the existing smoke dataset:
-
-```text
-data/labels/future_refactor_labels_v3.jsonl
-data/statistics/future_refactor_audit_v3.jsonl
-data/future_pr_samples_v3/<owner>__<repo>/<pr>/
-    metadata.json
-    diff.patch
-    before/
-        ast.json
-        dependency_graph.json
-        node_features.json
-        graph.pt
-```
-
-`metadata.json` preserves the sample ID, label protocol, coverage interval,
-outcome horizon, triggering event and evidence. The builder refuses to silently
-reuse samples whose saved labels/evidence no longer match the current label file.
-Use a new output directory for a revised cohort instead of overwriting it.
-
-Training requires verified v2 metadata and two explicit UTC cutoffs. Choose
-these after inspecting repository/date/event distributions; do not choose them
-by test performance. Replace the placeholders before running:
-
-```powershell
-python scripts/train_gnn.py --train-cutoff "TRAIN_CUTOFF_UTC" --validation-cutoff "VALIDATION_CUTOFF_UTC" --epochs 50 --output models/gnn_reviewed.pt --metrics data/statistics/gnn_reviewed_metrics.json
-```
-
-The split rules are:
-
-- Train: all six-month outcomes are known by the training cutoff.
-- Validation: PRs merge after the training cutoff and their outcomes are known
-  by the validation cutoff.
-- Test: PRs merge after the validation cutoff and have complete follow-up.
-- Purge the samples between these intervals whose future labels would not yet
-  be known. A triggering refactor event cannot appear across splits.
-
-Every split must contain both outcome classes. Training fits the feature scaler
-only on training graphs, selects the epoch and decision threshold using
-validation, and reports test metrics. Checkpoints save the exact PR IDs in each
-split. Random stratification is available only through explicit `--allow-smoke`.
-
-The current script keeps all training/validation/test graphs in CPU memory.
-Measure memory usage before a large run; large repository graphs may require a
-streaming training loader. Export already processes graphs in bounded batches.
-
-## Class balance and evaluation
-
-The goal is a representative, diverse dataset with enough independent positives.
-An equal positive/negative count alone does not remove repository, year, file or
-refactor-event bias. Repeating positives from one large refactor does not add
-independent evidence.
-
-The current training loss weights positives using the negative/positive ratio
-computed from the training split. That allows learning from an imbalanced cohort
-without discarding valid negatives. If balanced sampling is added later, it
-belongs only in training; do not automatically combine it with the same class
-weighting or apply it to validation/test. Preserve natural held-out prevalence
-so false-positive rates and precision remain meaningful.
-
-Before claiming useful prediction, compare against majority, repository/time,
-touched-file historical-hotspot and graph-metric baselines. Report a temporal
-test and a within-repository test, with sample counts and event concentration.
-Those baseline experiments are still pending.
-
-Metrics include precision, recall, F1, confusion counts and average precision.
-Equal prediction scores enter the precision/recall curve at the same threshold;
-the metric never breaks ties using labels. The `pr_auc_average_precision` field
-is average precision, not trapezoidal PR area. Evaluate uncertainty when the
-test contains few positives. A successful pipeline or passing unit test is not
-evidence that the model generalizes.
-
-The sigmoid output is currently uncalibrated. `risk_percent` is the score times
-100, not a validated real-world probability. Calibration and a baseline-backed
-assessment are needed before interpreting it as a chance of future remediation.
-
-## GNN embedding handoff for fusion
-
-For a newly trained checkpoint with saved split IDs:
-
-```powershell
-python scripts/export_gnn_embeddings.py --checkpoint models/gnn_reviewed.pt --output artifacts/gnn_embeddings.pt --device cpu
-```
-
-The exporter writes:
-
-```text
-artifacts/gnn_embeddings.pt      tensor bundle
-artifacts/gnn_embeddings.json    readable row manifest
-```
-
-Load the bundle in Python:
-
-```python
-import torch
-
-bundle = torch.load("artifacts/gnn_embeddings.pt", map_location="cpu", weights_only=False)
-sample_ids = bundle["sample_ids"]
-embeddings = bundle["embeddings"]  # [number_of_PRs, 64] with hidden_channels=32
-labels = bundle["labels"]
-splits = bundle["splits"]
-```
-
-Join CodeBERT and GNN rows using `sample_id`, such as `pytest-dev/pytest#14105`.
-Never join by directory order or assume both encoders use the same row order.
-Both encoders and the fusion classifier must respect the saved split IDs.
-Any supervised CodeBERT fine-tuning must also use training PRs only.
-
-The current 107-sample checkpoint predates saved split IDs. The exporter refuses
-to guess those IDs from its seed. For format development only, use:
-
-```powershell
-python scripts/export_gnn_embeddings.py --data-dir data/future_pr_samples --checkpoint models/gnn_future_risk_107.pt --output artifacts/gnn_embeddings_107_smoke_only.pt --allow-smoke --device cpu
-```
-
-This marks split membership `unknown`; it cannot support final fusion evaluation.
-Regenerate embeddings after training on the corrected cohort.
-
-## Inference on an existing prepared graph
-
-This command verifies local loading and scoring if the sample/checkpoint exist:
-
-```powershell
-python scripts/predict_gnn.py --graph data/future_pr_samples/pallets__flask/5777/before/graph.pt --checkpoint models/gnn_future_risk_107.pt --metadata data/future_pr_samples/pallets__flask/5777/metadata.json --device cpu
-```
-
-An optional historical label is displayed for comparison. It is not supplied to
-the model. Scoring a sample that may have been used during training is only a
-functional check. Preparing an arbitrary open PR or candidate branch remains
-a separate integration task.
-
-## Source layout and team ownership
-
-```text
-src/analysis/                 locked AST/graph/feature pipeline
-src/ml/hetero_data.py         locked Step-5 schema
-src/github/, src/scraper/     GitHub metadata collection
-src/filtering/               candidate discovery
-src/dataset/                 snapshots, comparisons and outcome protocol
-src/ml/gnn_data.py           touched masks, sample discovery, temporal split
-src/ml/hetero_gnn.py         encoder, pooling, auxiliary classifier, metrics
-src/ml/gnn_inference.py      checkpoint/scaler loading and inference
-src/ml/gnn_embeddings.py     fusion embedding export
-scripts/                    thin commands for each workflow stage
-tests/                      project tests
-artifacts/                  generated fusion handoff files
-```
-
-GNN work belongs in dataset/ML modules and their commands. CodeBERT should use
-separate semantic modules and `diff.patch` plus the shared sample/split contract.
-Fusion consumes the encoder outputs; it should not change the locked graph
-schema. Keep tokens, cloned repositories, graph datasets, model checkpoints and
-generated embedding bundles out of Git.
-
-## Historical Git evidence audit (no labels)
-
-Before labelling, inspect a completed collection against its local clone:
-
-```powershell
-python scripts/audit_pr_history.py --repo pallets/flask
-```
-
-After reviewing and saving event decisions, corrected protocol-v3 commands are:
-
-```powershell
-python scripts/label_future_refactors.py --repo pallets/flask --coverage data/raw/coverage_v2.json --event-reviews data/labels/flask_event_reviews.jsonl
-python scripts/build_future_pr_dataset.py --repo pallets/flask --max-positive 100 --max-negative 100
-python scripts/train_gnn.py --train-cutoff YYYY-MM-DDTHH:MM:SSZ --validation-cutoff YYYY-MM-DDTHH:MM:SSZ
-```
-
-The cutoff placeholders must be chosen from the labelled cohort dates; do not
-copy them literally. Protocol v3 verifies merge ancestry, the integrated PR
-boundary, and unchanged file paths through the target branch before assigning
-outcomes. A machine review can mark a PR non-architectural only when every
-changed production Python file has identical executable ASTs after dropping
-literal docstrings. Other machine/human-uncertain PR outcomes remain unknown.
-The 107 old graphs/checkpoint are preserved for smoke demonstrations; retraining
-defaults to new v3 labels, graphs and checkpoint filenames.
-
-This command adds no risk labels and does not switch the clone's checkout. It
-includes deleted files and both rename paths, respects the locked production
-Python scope, and parses changed source without executing repository code.
-Import/declaration changes are review evidence, not automatically architectural
-refactors. A non-shallow clone can still lack source contents (`blob:none`);
-the audit detects missing objects and stops rather than marking failed reads safe.
-For an existing dataset clone, download missing historical contents explicitly:
-
-```powershell
-git -C data/repositories/pallets/flask fetch --refetch --no-filter origin
-git -C data/repositories/pallets/flask fetch --refetch --no-filter origin '+refs/tags/*:refs/tags/*'
-```
-
-Generated reports (ignored by Git):
-
-```text
-data/statistics/pallets__flask_history_audit.jsonl
-data/statistics/pallets__flask_history_audit_summary.json
-```
-
-The 11 October 2026 Flask pilot inspected 645 PRs in the completed window:
-
-| Check | Count |
-| --- | ---: |
-| Production Python changes in the examined diff | 260 |
-| Production changes with complete six-month follow-up by date | 256 |
-| Production changes passing basic boundary/count/follow-up checks | 250 |
-| Merge boundary verified against PR head (all PRs) | 569 |
-| Single-commit integration boundary (all PRs) | 54 |
-| Ambiguous multi-commit squash/rebase boundary (all PRs) | 22 |
-| Git/GitHub changed-file count disagreements (all PRs) | 5 |
-
-These are **not final training-sample counts**. There are six production-changing
-PRs among the 22 ambiguous integrations. A multi-commit rebase cannot be safely
-represented by just the last commit's parent. Matching file counts alone does
-not resolve that uncertainty. Source parse failures in this pilot: zero.
-
-Of 1,792 potential later-change pairs matching dates and production paths,
-130 do not share the required commit ancestry. Another 712 have different branch
-names but do share ancestry. Neither date/path overlap nor equal branch names is
-a sufficient lineage check. These pairs are arbitrary changes, not reviewed
-refactor outcomes. See [Git's ancestry test](https://git-scm.com/docs/git-merge-base).
-Tracking file identity across intervening renames is still required before
-certifying negative outcomes.
-
-Small **proposed event-review examples**, based on inspected diffs:
-
-| PR | Proposed event interpretation | Actual change evidence |
-| --- | --- | --- |
-| Flask #3709 | Architectural refactor candidate | Extracts `Scaffold`; `Flask` and `Blueprint` use the shared base; imports and shared responsibilities move. |
-| Flask #5127 | Architectural refactor candidate | Separates Sans-IO bases from I/O implementations and moves scaffold code into `sansio`. |
-| Flask #3739 | Non-architectural event | Changes one word in a `Blueprint` docstring; not an executable dependency or responsibility change. |
-| Flask #4692 | Needs a frozen inclusion rule | Introduces a JSON-provider boundary alongside functionality/extensibility changes: mixed feature/refactor. |
-| Flask #5799 | Uncertain under architecture-only scope | Changes generator/context handling; the title's word "refactor" does not establish an architectural restructuring. |
-| Flask #4748 | Reconstruction uncertainty | Examined final integration diff is documentation-only, but its five-commit PR has an ambiguous boundary. |
-
-These examples are not automatically approved event reviews, expert judgements,
-or positive/negative training labels. An architectural event can label earlier
-PRs through a validated future-overlap relationship; the event itself is not
-automatically a positive sample. The labeller still needs integration-boundary,
-ancestry and rename safeguards wired in before final labels are generated.
-
-## Verification and remaining work
-
-Run only this project's tests; cloned repositories contain unrelated test suites:
-
-```powershell
-python -m pytest tests -q --basetemp .venv/pytest-project-check
-```
-
-Tests exercise graph conversion, Git snapshots, label censoring, coverage and
-review checks, temporal purging, tied-score metrics, model execution and keyed
-embedding export. They validate software behavior; dataset validity additionally
-requires review of the real collected PRs and events.
-
-The next work is complete historical collection, an evidence-based event
-definition, the final graph-input contract, a diverse cohort, temporal baseline
-experiments, GNN/fusion training, score calibration and live-PR preparation.
-XAI, RAG and benchmark comparisons follow the agreed
-encoder/label interface. No reliable final checkpoint has been trained yet.
-
-## Web app
-
-The former Streamlit dashboard has been replaced by a web app with two pages: a
-**landing page** that explains the project, and the **prototype** that works on the
-real project outputs. A light/dark toggle is available on both pages.
-
-| Part | Folder | Stack |
-| --- | --- | --- |
-| Front end | `web/` | React, Tailwind CSS, Framer Motion, Spectrum UI components |
-| Back end | `api/` | FastAPI |
-
-Run it (two terminals; `web/README.md` has the short version):
-
-```powershell
-pip install -r requirements.txt
-python scripts/build_kb.py --manifest artifacts/gnn_embeddings_v3.json   # once
-
-uvicorn api.main:app --port 8000          # terminal 1: back end
+uvicorn api.main:app --port 8000      # terminal 1: back end
 
 cd web
-npm install
-npm run dev                               # terminal 2: front end at http://localhost:5173
+npm run dev                           # terminal 2: front end at http://localhost:5173
 ```
 
-`npm run dev` forwards `/api` to port 8000. For a production build run `npm run build`
-in `web/` (output in `web/dist/`) and serve it with a static host that forwards `/api`
-to the back end.
+Open <http://localhost:5173/prototype>. The dev server forwards `/api` to port 8000. For a
+production build run `npm run build` in `web/` (output in `web/dist/`) and serve it with a static
+host that forwards `/api` to the back end.
 
-Prototype tabs:
+The **Data version** selector lists every folder `data/kb/<version>/` that has a `cards.jsonl`
+(v5, v4, v3). Prototype tabs:
 
-- **Overview**: four models side by side with bootstrap ranges, warnings, every test
-  PR's risk score against the threshold, dataset splits and purged PRs.
-- **PR explorer**: score, true label, correct or wrong, and XAI layers A, B and C.
-- **Live GitHub PR**: score a public pull request (see below).
-- **Ask the chatbot**: grounded answers with their sources; needs `GROQ_API_KEY` in
-  `.env`. Browsing the other tabs works without a Groq key.
+* **Overview**: the four models side by side with bootstrap ranges, every test PR's risk score
+  against the threshold (scrollable), and the dataset splits.
+* **PR explorer**: one PR's score, true label and whether the prediction was right. v3/v4 PRs show
+  XAI layers A, B and C. v5 PRs point to the Attribution tab.
+* **Live GitHub PR**: score a public PR (see below).
+* **Ask the chatbot**: grounded answers with sources, rendered as safe Markdown (no raw HTML).
+  Needs `GROQ_API_KEY`.
+* **Attribution (v5)**: a searchable list of v5 PRs, and for each one the risk bar, the score split
+  (base, structure GNN, pre-merge history, diff), the top 30 attributed edges as an interactive graph,
+  module coupling before and after, the top diff hunks, the RAG explanation if one exists, and the
+  explainer's unfaithfulness. Screenshots: `docs/screenshots_v5/`.
 
-The back end (`api/main.py`) reads data only through `src/rag/api.py` (`Chatbot`) and
-`src/live_pr.py`, and shapes tables with `api/views.py`, so changing the interface
-cannot change the pipeline. Endpoints: `/api/versions`, `/api/overview`, `/api/prs`,
-`/api/prs/detail`, `/api/live`, `/api/chat`, `/api/chat/reset`. `tests/test_api.py` and
-`tests/test_views.py` run it on test data.
+The back end reads data only through `src/rag/api.py`, `src/live_pr.py` and
+`api/v5_attribution.py`, so the interface cannot change the pipeline. Endpoints: `/api/versions`,
+`/api/overview`, `/api/prs`, `/api/prs/detail`, `/api/live`, `/api/chat`, `/api/chat/reset`,
+`/api/v5/attributions` and `/api/v5/attributions/{owner}/{repo}/{number}`.
 
-### Live GitHub PR demo
+Data the app reads (all Git-ignored, shared outside Git):
 
-Score one public GitHub pull request with the already-trained V4 GNN,
-CodeReviewer and fusion classifier:
+```text
+data/kb/<version>/cards.jsonl, kb.json      chatbot knowledge base, one per data version
+data/fusion/<version>/metrics.json          model results;  predictions.csv: every PR's scores
+artifacts/gnn_embeddings_<version>.json     PRs, labels and splits of a data version
+artifacts/gnn_metrics_<version>.json        split per repository and the baseline check
+data/xai/v5/<owner>__<repo>__<number>.json  v5 edge attributions (schema attribution_v5/1)
+data/rag_v5/explanations/<same name>.json   RAG explanations (optional)
+```
+
+## Live GitHub PR analysis
 
 ```powershell
-python scripts/analyze_live_pr.py --url https://github.com/pallets/click/pull/3880 --max-hunks 3
+python scripts/analyze_live_pr.py --url https://github.com/pallets/click/pull/3767 --max-hunks 3
 ```
 
-The command fetches GitHub's current synthetic test-merge revision, runs the
-unchanged Steps 2–5 on its first-parent base checkout, embeds the integrated
-production-code diff, then saves the result under `data/live/`. Set
-`GITHUB_TOKEN` to increase the GitHub API rate limit; a
-public PR does not otherwise require authentication. The web app's **Live
-GitHub PR** tab provides the same operation.
+This scores one public PR with the trained v4 GNN, CodeReviewer and fusion model (the v5 graph's
+`global_variable` nodes and `ACCESSES_GLOBAL` edges are removed to match that checkpoint). The
+result is saved under `data/live/`. The **Live GitHub PR** tab does the same.
 
-Live reports deliberately have `label: null`: an open PR has no observable
-six-month outcome. They are inference-only and are never added to training or
-evaluation. PRs with no analysed production Python change, or only new files
-that have no nodes in the base graph, are rejected instead of receiving a
-misleading structural score.
+The PR's state decides which code is analysed, and never silently the wrong one:
 
-## Rebuild everything for a data version (run_all)
+| PR state | Analysed | `mode` |
+|---|---|---|
+| Open, GitHub has a test merge | GitHub's merge commit vs its first parent. If GitHub computed it against an older base, that is recorded in `base_note`. | `open_test_merge` |
+| Merged (merge, squash or rebase) | the merge commit vs its first parent | `merged_pr` |
+| Open, no test merge | a local merge in a temporary worktree. A conflict stops with a clear error. | `open_local_merge` |
+| Closed without merging | the PR head vs its merge base, with a warning | `closed_unmerged` |
 
-When the GNN teammate delivers a new data version (manifest, GNN embeddings,
-checkpoint and samples), one command rebuilds all of my outputs in order:
+Live reports always have `label: null`: an open PR has no six-month outcome yet. They are never
+added to training or evaluation.
 
+## Static analysis: points 1–5
+
+```powershell
+python scripts/clone_repositories.py --repo pallets/flask      # 1. clone (or --all)
+python scripts/analyse_repositories.py --repo pallets/flask    # 2-4. AST, dependency graph, features
+python scripts/build_pyg_graphs.py --repo pallets/flask        # 5. PyTorch Geometric HeteroData
 ```
-python scripts/run_all.py --manifest artifacts/gnn_embeddings_v4.json
+
+`analyse_repositories.py --path <folder>` analyses any local repository. Outputs (Git-ignored):
+
+```text
+data/repositories/pallets/flask/                local clone (HEAD recorded in clone_manifest.json)
+data/analysis/pallets__flask/ast.json           symbols, imports, calls, parse errors
+data/analysis/pallets__flask/dependency_graph.json
+data/analysis/pallets__flask/node_features.json
+data/pyg/pallets__flask/graph.pt
 ```
 
-Steps: `embeddings` (CodeReviewer vectors) -> `fusion` -> `explain` (XAI layers
-A, B, C) -> `kb` (chatbot knowledge base) -> `eval` (free retrieval check).
-Missing inputs are listed before anything runs. If a step fails, the run stops
-and prints the command to continue, e.g. `--from explain`. Useful options:
-`--from` / `--to` (run part of the chain), `--explain-split all`, `--no-graph`
-(skip layer C), `--with-eval` (full Groq evaluation, about 15 calls). Each run is
-logged in `data/runs/<version>/run.json` with exit codes, durations and SHA-256
-fingerprints of the input files. `tests/test_run_all.py` covers it.
+**Parsing** finds every eligible `.py` file and never executes it. Tests, docs, examples,
+benchmarks, virtual environments, `setup.py` and `conftest.py` are skipped by default
+(`static_analysis` in `config/settings.json`; `--include-tests` adds tests).
+
+**The graph** has **7 node types**: module, class, function, method, external module, external
+callable and global variable (a module-level variable). It has **5 relations**:
+
+* `CONTAINS`: module → class, function or global variable; class → method;
+* `IMPORTS`: a scope → an imported project or external module;
+* `CALLS`: a scope → a resolved project callable or an external callable;
+* `INHERITS`: a class → its base class (builtin bases such as `object` are skipped);
+* `ACCESSES_GLOBAL`: a function, method or class → a module-level variable it reads or writes.
+  Names used only in type annotations are not counted.
+
+Resolution is conservative: ambiguous calls stay external instead of being guessed.
+
+**Features:** every node has 15 numeric features: lines of code, parameter counts, vararg and
+keyword flags, cyclomatic complexity, docstring and async flags, base-class count, and in/out
+degrees per relation. `node_features.json` keeps the feature names.
+
+**HeteroData** (`src/ml/hetero_data.py`, schema version 2) always has all 7 node stores and all
+46 typed edge stores (for example `("method", "CALLS", "function")`), possibly empty, so graphs from
+different repositories and commits batch together. Load a graph with
+`src.ml.hetero_data.load_hetero_data(path)`. Only load `.pt` files this project created.
+
+## The v5 dataset and label
+
+**The label is automatic.** A PR is **label 1 (degrading)** when, in the six months after it is
+merged, the modules it touched gain dependency links faster than the project's own trend, or
+one of them joins a new import cycle:
+
+* coupling of a module = modules it depends on + modules that depend on it (imports, calls,
+  inheritance and shared module-level variables all count);
+* growth g = the touched modules' mean coupling change; trend Δ = the whole project's mean change;
+* excess growth e = g − Δ; **label 1 if e > 0.5 or a touched module joins a new import cycle**.
+
+Subtracting the trend means a project that grows everywhere does not make a PR degrading. Whether a
+PR *itself* creates a cycle is not used as the label: a rule (Tarjan) decides it with no learning,
+and it occurred in only 3 of 260 pilot PRs. The full definitions and proofs are in
+`docs/report_v5/math_formulations.md` and `src/dataset/future_coupling.py`.
+
+**Pre-merge history features (v5.1):** 13 numbers per PR, all measured before the merge: the touched
+modules' coupling growth over the previous six months against their project, whether they joined a
+cycle then, their current coupling and cycle share, project size and mean coupling, and commits and
+authors on the touched files in the previous 182 days (`src/dataset/history_features.py`).
+
+**Split:** a repository holdout (`config/coupling_split_v5.json`). Each project is entirely in
+train, validation or test.
+
+## Train, compare and explain (v5 pipeline)
+
+```powershell
+# 1. dataset: before/after graphs, diffs and labels for every PR (local clones, no GitHub API)
+python scripts/build_coupling_dataset.py --repos config/coupling_repositories.json --clones data/repositories --output data/coupling_samples_v5
+python scripts/build_history_features.py --data-dir data/coupling_samples_v5 --clones data/repositories
+python scripts/rebuild_v5_graphs.py --data-dir data/coupling_samples_v5 --clones data/repositories   # only after a graph-extraction fix
+
+# 2. hand-off files: the manifest and diffs, and the Kaggle upload folder
+python scripts/export_v5_files.py --data-dir data/coupling_samples_v5 --out-dir data
+python scripts/pack_v5_for_kaggle.py --data-dir data/coupling_samples_v5 --out-dir kaggle_v5
+
+# 3. diff embeddings (GPU) and GNN training, 5 seeds (notebooks/ai_guardian_v51_kaggle.ipynb runs both)
+python scripts/embed_diffs_kaggle.py --diffs diffs_v5.jsonl --output-dir embeddings_v5
+python scripts/train_coupling_gnn.py --data-dir data/coupling_samples_v5 --seeds 1 2 3 4 5
+
+# 4. the GNN against every baseline on the held-out projects (writes data/comparison_v5/)
+python scripts/compare_coupling_models.py --data-dir data/coupling_samples_v5
+
+# 5. one edge-attribution file per test PR, for the Attribution tab
+python scripts/explain_coupling_v5.py --data-dir data/coupling_samples_v5 --clones data/repositories --checkpoint data/gnn_v5/seed_1/model.pt --output-dir data/xai/v5 --split-name test --limit 200
+
+# 6. results in the web app's layout, then the v5 chatbot knowledge base
+python scripts/export_v5_web_bundle.py --manifest <v5_manifest.jsonl> --comparison data/comparison_v5 --gnn-dir <chosen GNN run>
+python scripts/build_kb.py --manifest artifacts/gnn_embeddings_v5.json --samples-dir data/coupling_samples_v5
+```
+
+**Model:** a relation-aware GraphSAGE GNN, with 2 layers and 32 hidden channels. It averages the
+nodes in the touched files and their one-hop neighbours, adds the 13 history features, and then
+classifies. Features are standardised with training statistics only. Scores are the mean of 5 seeds.
+
+**Diff branch:** CodeReviewer (`microsoft/codereviewer`, encoder only, never retrained) reads the
+production-code diff in overlapping 512-token windows. It is combined with the GNN by late fusion of
+log-odds, with the weight chosen on validation.
+
+**Explanations** (`src/xai/coupling_attribution.py`): edge-level Integrated Gradients scales every
+edge's message from 0 (switched off) to 1 (the real graph). The edge numbers add up to the score
+change between the two, and positive numbers push the risk up. Node-level Integrated Gradients
+starts from the training-average features. GNNExplainer is a second, independent explainer.
+Each file keeps the top 30 edges, the score split (layer A), the most influential diff hunks and
+an unfaithfulness score (0 = the top edges alone reproduce the prediction). The files come from
+the seed-1 model, so their risk score can differ slightly from the 5-seed mean.
+
+## Explanations with RAG
+
+`src/rag_v5/` turns an attribution file into a grounded explanation and a minimal-fix suggestion:
+
+1. **Signature:** deterministic evidence tags from the attributed subgraph, for example
+   `added_dependency`, `cross_module_call`, `global_state` and `mutual_import`, weighted by
+   positive attribution.
+2. **Retrieval:** 50 design-principle cards (`docs/principles/`: SOLID, package principles,
+   coupling smells, refactorings and Python-specific advice) are retrieved by those tags, not by the
+   question text. A BM25 retriever on the PR title and diff is the "conventional RAG" comparison.
+3. **Generation:** Groq `openai/gpt-oss-120b` returns strict JSON: verdict, explanation, cited
+   edges, principle ids and a suggested refactoring.
+4. **Grounding:** an answer is rejected, with one repair attempt, if it cites an edge or principle
+   that was not supplied, or a number not in the input.
+
+```powershell
+python scripts/rag_v5_explain.py --attribution data/xai/v5/OWNER__REPO__N.json --out data/rag_v5/explanations/OWNER__REPO__N.json --mode signature
+python scripts/rag_v5_evaluate.py --references docs/eval_v5/references.json   # BERTScore, ROUGE, P@3, grounding
+python scripts/rag_v5_google_form.py build                                                             # blind A/B/C survey + private key
+python scripts/rag_v5_survey.py --responses data/rag_v5/survey_long.csv --key data/rag_v5/survey_key.json
+```
+
+`--mode` is `signature` (ours), `text` (BM25) or `none`. The evaluation uses 40 held-out PRs with
+hand-written reference explanations. The survey's private key (`data/rag_v5/survey_key.json`)
+must match the published form. Method and results: `docs/report_v5/rag_section.md`.
+
+## Graph validation and tool baselines
+
+**Is the graph correct?** (`scripts/validate_graph_v5.py`, write-up in
+`docs/validation_v5/graph_validation.md`):
+
+| Check | Precision | Recall | F1 |
+|---|---:|---:|---:|
+| CALLS vs the PyCG micro-benchmark, ours (119 programs) | 97.2 | 43.6 | 60.2 |
+| CALLS, PyCG itself on the same benchmark | 95.9 | 87.7 | 91.6 |
+| IMPORTS vs grimp, 10 repositories | 97.7 | 100.0 | 98.8 |
+| IMPORTS vs grimp, modules both tools scan | 100.0 | 100.0 | 100.0 |
+| Gold set: CALLS / INHERITS / ACCESSES_GLOBAL | 97.9 / 100 / 80.0 | 88.7 / 76.3 / 50.0 | 93.1 / 86.6 / 61.5 |
+
+The graph's edges are precise. Its recall is limited where values flow through assignments,
+containers or returns. The gold set is small (6 files, 99 relations), its labels were AI-drafted,
+and an independent second labeller is pending. Extraction bugs found are listed with minimal
+examples in `docs/validation_v5/bugs_found.md`.
+
+```powershell
+python scripts/validate_graph_v5.py --pycg-dir <PyCG clone> --repos-dir <checkouts> --pycg-python <Python 3.10 with PyCG> --out data/validation_v5/
+```
+
+**Established tools as baselines** (`docs/validation_v5/tool_baselines.md`). Every tool reads the
+touched files at the commit before the PR and at the merge, so it uses no information from after
+the merge:
+
+* radon, pylint and a CodeScene-style hotspot (our re-implementation of the published method, not
+  CodeScene): `scripts/run_tool_metrics_v5.py` (parallel) or `scripts/tool_metrics_v5.py` →
+  `data/tool_metrics_v5.jsonl`, 6,141 PRs;
+* SonarQube Community 26.10, in Docker (`docker/sonarqube/`): `scripts/sonar_v5.py` scans
+  250 PRs at a time → `data/sonar_v5.jsonl`, 6,140 PRs.
+
+These tools score files one at a time and cannot see coupling across modules, which is what the
+label measures.
+
+## Tests
+
+```powershell
+python -m pytest -q
+```
+
+`pytest.ini` limits collection to `tests/`, so the cloned projects' own tests never run. Tests need
+no network, Docker or API keys.
+
+## Repository layout
+
+```text
+src/analysis/        AST parser, dependency graph, node features (points 2-4)
+src/ml/              HeteroData schema, GNN, training data, shortcut baselines, split planning
+src/dataset/         snapshots, future-coupling labels, history features, structural metrics
+src/semantic/        diff encoder (CodeBERT / CodeReviewer)
+src/fusion/          fusion data alignment, model and evaluation
+src/xai/             XAI layers A-C (v3/v4) and v5 edge attribution
+src/rag/             the chatbot: knowledge cards, retrieval, grounded answers
+src/rag_v5/          XAI-grounded RAG: signature, retrieval, generation, grounding check
+src/validation_v5/   graph validation (PyCG, grimp, gold set), radon/pylint/hotspot, SonarQube
+src/live_pr.py       live GitHub PR preparation and scoring
+src/github/, src/scraper/, src/filtering/   PR metadata collection (v3/v4)
+api/                 FastAPI back end (main.py, views.py, v5_attribution.py)
+web/                 React front end
+scripts/             one command per workflow step
+docs/knowledge/      method notes the chatbot cites
+docs/principles/     the 50 design-principle cards
+docs/report_v5/      maths, RAG report section
+docs/validation_v5/  graph validation, tool baselines, bugs found
+docs/eval_v5/        reference answers, evidence sheets, survey material
+config/              settings, repository lists, data splits, chatbot settings
+notebooks/           Kaggle notebooks for embedding and training
+tests/               project tests and fixtures
+```
+
+Tokens, clones, datasets, checkpoints, embeddings and generated results are kept out of Git and
+shared separately.
+
+## Limitations
+
+* **Static analysis** cannot see dynamic imports, reflection, monkey-patching or calls through
+  values in containers. This mostly means missing edges, so the coupling measures are conservative.
+* **The label is an outcome proxy:** other PRs in the six months also change the touched modules. It
+  is not a causal claim.
+* **Attributions describe the model**, not the real cause of later coupling growth.
+* **Scores are uncalibrated.** Compare PRs by score and use the threshold for the decision.
+* **The gold set is small and AI-drafted.** Survey responses are still being collected.
+
+## Earlier versions (v3 and v4)
+
+* **v3** labelled a PR risky when a human-reviewed architectural refactor touched the same files
+  within six months, and split PRs by merge time. Its GNN pooled the whole repository and the
+  touched nodes.
+* **v4** kept the reviewed labels, held out whole repositories (Flask and Jinja for training, Click
+  for validation, Werkzeug for testing), pooled only touched files and their neighbours, and added
+  CodeReviewer, fusion, XAI layers A–C, the chatbot and the web app. `scripts/run_all.py
+  --manifest artifacts/gnn_embeddings_v4.json` rebuilds that chain.
+
+The v3/v4 data collection (GraphQL scraping with coverage files, event reviews,
+`label_future_refactors.py`, `build_future_pr_dataset.py`, `train_gnn.py`, history audits) is still
+in the repository. The previous README documents it in full: `git show d06a926:README.md`.
