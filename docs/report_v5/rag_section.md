@@ -40,70 +40,103 @@ justified; the risk score is not presented as a calibrated probability.
 ## Evaluation design
 
 The reference set is drawn only from held-out projects. With a fixed random
-seed, we selected 20 predicted-degrading and 20 predicted-safe PRs.
-For each one, a human reviewer reads the attribution and the actual GitHub
-diff, then writes a reference explanation and smallest plausible fix, and
-marks relevant principle-card IDs. Generated outputs are not used to write
-these references. The three systems are attribution-signature retrieval,
-title-and-diff BM25 retrieval, and no retrieved cards. This ablation separates
-the benefit of the retrieval source from that of giving the model any cards.
+seed, we selected 20 predicted-degrading and 20 predicted-safe PRs. For each
+one, a reference explanation, the smallest plausible fix and the relevant
+principle-card IDs were written from the attribution file and the actual GitHub
+diff. **These 40 references were drafted by a language model (Codex); review by
+a team member is [pending / completed on DATE].** Generated outputs were not
+used to write them. Because the references are LLM-drafted, BERTScore and ROUGE
+measure agreement with a model-written reference, not with an independent human
+expert; the blind developer study below is the human evaluation. The three
+systems are attribution-signature retrieval (ours), title-and-diff BM25
+retrieval, and no retrieved cards. This ablation separates the benefit of the
+retrieval source from that of giving the model any cards.
 
 We compare each generated explanation with its reference using BERTScore
-precision, recall, and F1, which measures contextual-token similarity, and
-ROUGE-1, ROUGE-2, and ROUGE-L F-measures, which measure word-sequence overlap
-(Zhang et al.; Lin). Neither metric proves that a technical statement is true.
-We therefore also measure principle precision@3 and recall@3 against the
-human IDs, the fraction of answers with zero grounding violations, mean
-violation count, and a simple fix-actionability proxy: naming both a changed
-file and a catalogue refactoring. Each mean receives a 95% percentile
-bootstrap interval from 1,000 resamples. Paired Wilcoxon tests compare the
-signature system with each baseline for BERTScore-F1 and ROUGE-L. We report
-sample size and p-values rather than claiming significance from a small
-difference alone.
+precision, recall and F1 (rescaled against its baseline), which measures
+contextual-token similarity, and ROUGE-1, ROUGE-2 and ROUGE-L F-measures, which
+measure word-sequence overlap (Zhang et al.; Lin). Neither metric proves that a
+technical statement is true. We therefore also measure principle precision@3
+and recall@3 against the reference principle IDs, and a simple
+fix-actionability proxy: naming both a changed file and a catalogue
+refactoring. Each mean receives a 95% percentile bootstrap interval from 1,000
+resamples. Paired Wilcoxon signed-rank tests compare the signature system with
+each baseline.
 
-For a separate blind human study, 12 of the same PRs are shown with the three
-systems' explanations in independently shuffled A/B/C order. Reviewers rate
+An answer counts as valid only if it passes the grounding checker after its one
+repair attempt. Systems are compared on the PRs where all three produced a
+valid answer, so every system is scored on the same PRs. We report each
+system's failure count separately, since the checker failures are themselves a
+result.
+
+For a separate blind human study, 12 PRs on which all three systems produced a
+valid answer were chosen with a fixed seed and shown with the three
+explanations in independently shuffled A/B/C order. Reviewers rate
 correctness, usefulness for review, actionability of the fix, and clarity from
-1 to 5. We also ask whether they are students or professionals and how long
-they have coded. The private order key is kept separate from the form. The
-analysis reports exact respondent counts and role mix, mean and median ratings,
-a Friedman repeated-measures test, Holm-corrected paired Wilcoxon comparisons,
-and ordinal Krippendorff alpha for rater agreement. Survey responses are
-never synthesized.
+1 to 5, and say whether they are students, professionals or researchers and
+how many years they have programmed. The private order key is kept separate
+from the form. The analysis reports exact respondent counts and role mix, mean
+and median ratings, a Friedman repeated-measures test, Holm-corrected paired
+Wilcoxon comparisons, and ordinal Krippendorff alpha for rater agreement.
+Survey responses are never synthesized.
 
-## Results and limitations
+## Results
 
-The automatic evaluation used 40 real held-out v5 PRs and 120 generated
-explanations. Values below are means with 95% bootstrap intervals. Because
-BERTScore was rescaled against its baseline, negative values are possible and
-mean that similarity was below that baseline; they are not error values.
+We generated 120 explanations for 40 held-out v5 PRs. The grounding checker
+rejected 7 (signature 3 of 40, text BM25 1 of 40, no retrieval 3 of 40): 3
+cited edges absent from the attribution file, 2 gave a verdict that contradicts
+the model's threshold, 1 stated a number not in the input, and 1 cited
+principles that were not retrieved. Six PRs
+lack a valid answer from at least one system, so the paired comparison uses
+**34 PRs**. An earlier run required exact equality for numbers, so correctly
+rounded values (0.409 for 0.408685) were rejected; we fixed the checker to
+accept ordinary rounding, which raised coverage from 29 to 34 PRs. Values are
+means with 95% bootstrap intervals.
 
-| Metric | Signature | Text BM25 | No retrieval |
+| Metric (34 PRs) | Signature (ours) | Text BM25 | No retrieval |
 |---|---:|---:|---:|
-| BERTScore F1, mean [95% CI] | -1.627 [-2.390, -0.864] | -1.903 [-2.781, -1.147] | -0.905 [-1.539, -0.281] |
-| ROUGE-L F1, mean [95% CI] | 0.115 [0.087, 0.142] | 0.107 [0.077, 0.135] | 0.134 [0.112, 0.156] |
-| Principle precision@3 | 0.108 [0.058, 0.167] | 0.050 [0.008, 0.092] | 0.000 [0.000, 0.000] |
-| Zero-violation grounding rate | 0.650 [0.500, 0.800] | 0.600 [0.425, 0.750] | 0.800 [0.675, 0.925] |
-| Actionable-fix proxy | 0.050 [0.000, 0.125] | 0.025 [0.000, 0.075] | 0.000 [0.000, 0.000] |
+| **Principle precision@3** | **0.118** [0.059, 0.176] | 0.029 [0.000, 0.078] | 0.000 |
+| **Principle recall@3** | **0.137** [0.074, 0.211] | 0.034 [0.000, 0.088] | 0.000 |
+| **BERTScore F1** | **0.137** [0.114, 0.163] | 0.113 [0.092, 0.132] | 0.101 [0.082, 0.118] |
+| ROUGE-L F1 | 0.171 [0.159, 0.184] | 0.172 [0.163, 0.181] | 0.168 [0.157, 0.178] |
+| ROUGE-1 F1 | 0.286 [0.267, 0.306] | 0.286 [0.269, 0.304] | 0.294 [0.278, 0.311] |
+| ROUGE-2 F1 | 0.039 [0.030, 0.048] | 0.049 [0.040, 0.059] | 0.048 [0.038, 0.057] |
+| Actionable-fix proxy | 0.118 [0.029, 0.235] | 0.029 [0.000, 0.088] | 0.000 |
+| Failed grounding (of 40) | 3 | 1 | 3 |
 
-Signature retrieval more than doubled principle precision@3 over text BM25
-(0.108 against 0.050) and also improved recall@3 (0.125 against 0.054). It did
-not outperform the no-retrieval baseline on explanation-similarity metrics.
-Paired Wilcoxon tests found no significant difference between signature and
-text or signature and no retrieval for BERTScore-F1 or ROUGE-L (all p-values
-were above 0.17). The no-retrieval system also had the highest zero-violation
-grounding rate. These results support the narrower claim that attributed graph
-signals improve retrieval of human-relevant principles over lexical BM25, not
-the broader claim that they make every generated explanation better. The blind
-human study is prepared but has no responses yet, so no Likert results are
-reported.
+| Paired Wilcoxon test (34 PRs) | Signature vs text BM25 | Signature vs no retrieval |
+|---|---:|---:|
+| Principle precision@3 | **p = 0.033** (better on 10 PRs, worse on 1) | p = 0.001 |
+| Principle recall@3 | **p = 0.041** | p = 0.003 |
+| BERTScore F1 | p = 0.174 | p = 0.041 |
+| ROUGE-L F1 | p = 0.577 | p = 0.946 |
+
+**Retrieving on the attributed edges finds the design principles in the
+references about four times as often as BM25 on the PR text** (precision@3
+0.118 against 0.029; p = 0.033). This is the direct test of using graph
+attributions, rather than text, as the retrieval query. The no-retrieval system
+scores 0 by construction, since it is given no cards to cite. The signature
+system also has the highest BERTScore F1. Its gain over no retrieval
+(p = 0.041) does not survive a Holm correction for the two BERTScore
+comparisons, and its gain over text BM25 is not significant (p = 0.174). ROUGE
+shows no difference between the systems: the explanations use similar words,
+and the difference lies in which principles and edges they cite. These results
+support the narrower claim that attributed graph signals improve the retrieval
+of relevant design principles over lexical BM25, not that they make every
+generated explanation better. Two of the 3 signature failures cited edges that
+were not in the attribution file, a reminder that the grounding check is
+needed. The blind developer study is live; [N] responses had been received by
+[DATE].
+
+## Limitations
 
 There are several limits to what this study can establish. Attributions
 reflect model behavior, not necessarily causal reasons for future code
 changes. Graph construction can miss dynamic Python behavior and may
 misinterpret a type-only import. A card's tag match makes it relevant to
-inspect, not automatically correct for that PR. Reference answers and Likert
-ratings involve human judgment; a small sample may have wide uncertainty.
+inspect, not automatically correct for that PR. The reference answers are LLM-drafted, so the automatic metrics measure
+agreement with a model-written reference; with 34 PRs and a small survey,
+uncertainty is wide.
 BERTScore and ROUGE can reward fluent similarity while missing an unsupported
 technical claim, which is why the explicit grounding check and blind reviewer
 ratings matter. Suggested fixes are hypotheses for maintainers, not patches

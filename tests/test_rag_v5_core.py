@@ -1,4 +1,4 @@
-import copy
+﻿import copy
 import json
 from pathlib import Path
 
@@ -9,7 +9,7 @@ from src.rag_v5.grounding import edge_label, violations
 from src.rag_v5.retrieval import load_cards, retrieve_by_signature, retrieve_by_text
 from src.rag_v5.signature import TAGS, signature
 
-FIXTURE = Path(__file__).parent / "fixtures" / "attribution_v5"
+FIXTURE = Path(__file__).parent / "fixtures" / "rag_v5"
 
 
 def sample(name="high_risk"):
