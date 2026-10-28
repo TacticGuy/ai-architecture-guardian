@@ -48,8 +48,8 @@ def make_batches(samples: list[dict], splits: list[str], size: int) -> list[tupl
     return batches
 
 
-def run_batch(index: int, batch: list[dict], repos_dir: Path, client: SonarClient, host_url: str,
-              token: str, scanner=None, heap: str | None = None) -> list[dict]:
+def run_batch(index: int | str, batch: list[dict], repos_dir: Path, client: SonarClient, host_url: str,
+              token: str, scanner=None, heap: str | None = None, timeout: int | None = None) -> list[dict]:
     before, after = {}, {}
     for sample in batch:
         repository = repository_path(repos_dir, sample["repo"])
@@ -61,9 +61,28 @@ def run_batch(index: int, batch: list[dict], repos_dir: Path, client: SonarClien
     kwargs = {"scanner": scanner} if scanner else {}
     if heap:
         kwargs["heap"] = heap
+    if timeout:
+        kwargs["timeout"] = timeout
     old = scan_batch_side(before, f"v5_batch_{index}_before", client, host_url, token, **kwargs)
     new = scan_batch_side(after, f"v5_batch_{index}_after", client, host_url, token, **kwargs)
     return batch_rows([s["sample_id"] for s in batch], old, new)
+
+
+def run_splitting(index: int | str, batch: list[dict], failures: list[dict], **kwargs) -> list[dict]:
+    """run_batch, and on failure (e.g. a scanner stalled on a few very large files) retry each half.
+
+    A single PR that still fails is recorded in ``failures`` and gets no row, so a later run retries it.
+    """
+    try:
+        return run_batch(index, batch, **kwargs)
+    except (SonarError, OSError) as exc:
+        print(f"batch {index} ({len(batch)} PRs) failed: {str(exc)[:200]}", file=sys.stderr)
+        if len(batch) == 1:
+            failures.append({"sample_id": batch[0]["sample_id"], "error": str(exc)[:300]})
+            return []
+        half = len(batch) // 2
+        return (run_splitting(f"{index}a", batch[:half], failures, **kwargs)
+                + run_splitting(f"{index}b", batch[half:], failures, **kwargs))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -76,6 +95,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--scanner-heap", default="3g", help="scanner JVM max heap, e.g. 3g (empty = image default)")
     parser.add_argument("--splits", default="test,val,train", help="comma list, run in this order")
     parser.add_argument("--max-batches", type=int, help="stop after N batches (timing runs)")
+    parser.add_argument("--scan-timeout", type=int, default=1800,
+                        help="seconds per scan before the batch is split in half and retried")
     parser.add_argument("--sonar-url", default=os.getenv("SONAR_HOST_URL", "http://localhost:9000"))
     parser.add_argument("--scanner-host-url", default=os.getenv("SONAR_SCANNER_HOST_URL", "http://host.docker.internal:9000"),
                         help="the server URL as seen from inside the scanner container")
@@ -106,20 +127,17 @@ def main(argv: list[str] | None = None) -> int:
     for number, (split, batch) in enumerate(batches, 1):
         index = len(meta["batches"]) + 1
         started = time.monotonic()
-        try:
-            rows = run_batch(index, batch, args.repos_dir, client, args.scanner_host_url, token,
-                             heap=args.scanner_heap or None)
-        except (SonarError, OSError) as exc:
-            print(f"batch {index} ({split}, {len(batch)} PRs) failed: {exc}", file=sys.stderr)
-            meta["batches"].append({"index": index, "split": split, "prs": len(batch), "error": str(exc)[:300]})
-            _write_meta(meta_path, meta, args.out)
-            continue
+        failures: list[dict] = []
+        rows = run_splitting(index, batch, failures, repos_dir=args.repos_dir, client=client,
+                             host_url=args.scanner_host_url, token=token, heap=args.scanner_heap or None,
+                             timeout=args.scan_timeout)
         with args.out.open("a", encoding="utf-8") as handle:
             handle.writelines(json.dumps(row) + "\n" for row in rows)
         seconds = round(time.monotonic() - started, 1)
         nulls = sum(row["sonar.code_smells"] is None for row in rows)
         meta["batches"].append({"index": index, "split": split, "prs": len(batch), "seconds": seconds,
-                                "null_rows": nulls, "finished_at": datetime.now(timezone.utc).isoformat()})
+                                "null_rows": nulls, "finished_at": datetime.now(timezone.utc).isoformat(),
+                                **({"failed": failures} if failures else {})})
         _write_meta(meta_path, meta, args.out)
         print(f"batch {number}/{len(batches)}: {split}, {len(batch)} PRs, {seconds}s, {nulls} null rows", file=sys.stderr)
     _write_meta(meta_path, meta, args.out)

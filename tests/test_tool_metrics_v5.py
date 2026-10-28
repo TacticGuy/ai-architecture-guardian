@@ -274,6 +274,44 @@ def test_batches_never_mix_splits_and_respect_the_order():
     assert pr_folder("pallets/flask#5123") == "pallets__flask__5123"
 
 
+def test_failed_batch_is_split_until_the_bad_pr_is_isolated(monkeypatch):
+    spec = importlib.util.spec_from_file_location("sonar_cli", Path(__file__).parents[1] / "scripts/sonar_v5.py")
+    cli = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cli)
+    calls = []
+
+    def fake_run_batch(index, batch, **kwargs):
+        calls.append((index, len(batch)))
+        if any(s["sample_id"] == "o/r#2" for s in batch):  # the PR whose files stall the scanner
+            raise SonarError("sonar-scanner timed out")
+        return [{"sample_id": s["sample_id"]} for s in batch]
+
+    monkeypatch.setattr(cli, "run_batch", fake_run_batch)
+    failures = []
+    rows = cli.run_splitting(7, [{"sample_id": f"o/r#{i}"} for i in range(4)], failures)
+    assert [row["sample_id"] for row in rows] == ["o/r#0", "o/r#1", "o/r#3"]
+    assert failures == [{"sample_id": "o/r#2", "error": "sonar-scanner timed out"}]
+    assert calls == [(7, 4), ("7a", 2), ("7b", 2), ("7ba", 1), ("7bb", 1)]
+
+
+def test_scanner_timeout_removes_the_container(monkeypatch, tmp_path):
+    from src.validation_v5 import sonar
+    commands = []
+
+    def fake_run(command, **kwargs):
+        commands.append(command)
+        if command[:2] == ["docker", "run"]:
+            raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(sonar.subprocess, "run", fake_run)
+    with pytest.raises(SonarError, match="timed out after 5s"):
+        sonar.run_scanner(tmp_path, "v5_batch_2_after", "h", "secret", timeout=5)
+    name = commands[0][commands[0].index("--name") + 1]
+    assert commands[1] == ["docker", "rm", "-f", name] and name.startswith("v5_batch_2_after_")
+    assert "secret" not in " ".join(commands[0])
+
+
 def test_project_key_and_seeded_test_subset():
     assert project_key("pallets/flask#5123", "before") == "v5_pallets_flask_5123_before"
     samples = [{"sample_id": f"o/r#{i}", "split": "test" if i % 2 else "train"} for i in range(40)]

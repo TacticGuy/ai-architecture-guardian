@@ -83,12 +83,18 @@ def run_scanner(folder: Path, key: str, host_url: str, token: str, image: str = 
     garbage collection during rule execution.
     """
     java = ["-e", f"SONAR_SCANNER_JAVA_OPTS=-Xmx{heap}"] if heap else []
-    command = ["docker", "run", "--rm", "-e", f"SONAR_HOST_URL={host_url}", "-e", "SONAR_TOKEN", *java,
-               "-v", f"{folder.resolve()}:/usr/src", image, *extra,
+    container = f"{key}_{os.getpid()}"
+    command = ["docker", "run", "--rm", "--name", container, "-e", f"SONAR_HOST_URL={host_url}",
+               "-e", "SONAR_TOKEN", *java, "-v", f"{folder.resolve()}:/usr/src", image, *extra,
                f"-Dsonar.projectKey={key}", "-Dsonar.sources=.", "-Dsonar.python.version=3",
                "-Dsonar.scm.disabled=true", "-Dsonar.sourceEncoding=UTF-8"]
-    result = subprocess.run(command, capture_output=True, text=True, timeout=timeout,
-                            env={**os.environ, "SONAR_TOKEN": token})
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=timeout,
+                                env={**os.environ, "SONAR_TOKEN": token})
+    except subprocess.TimeoutExpired:
+        # Killing the docker client does not stop the container; remove it so it frees its memory.
+        subprocess.run(["docker", "rm", "-f", container], capture_output=True, timeout=120)
+        raise SonarError(f"sonar-scanner timed out after {timeout}s for {key}") from None
     if result.returncode:
         raise SonarError(f"sonar-scanner failed for {key}: {result.stdout[-400:]}{result.stderr[-400:]}")
     task = task_id_from_output(result.stdout + result.stderr)
