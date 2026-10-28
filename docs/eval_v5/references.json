@@ -1,5 +1,7 @@
 {
-  "_note": "Independent references written from the real v5 attribution files and public GitHub diffs. Synthetic fixtures and generated RAG answers were not used.",
+  "_note": "LLM-drafted from the real v5 attribution files and public GitHub diffs; independent human review is pending. Synthetic fixtures and generated RAG answers were not used.",
+  "_reference_author": "Codex (LLM)",
+  "_review_status": "human review pending",
   "items": [
     {
       "sample_id": "arrow-py/arrow#1021",

@@ -5,7 +5,19 @@ import json
 import re
 from typing import Any
 
-NUMBER = re.compile(r"(?<![\w.])-?\d+(?:\.\d+)?(?![\w.])")
+# Allow normal sentence punctuation after a number (for example ``0.409.``),
+# while still avoiding pieces of identifiers and multi-dot version strings.
+NUMBER = re.compile(r"(?<![\w.])-?\d+(?:\.\d+)?(?!\w|\.\d)")
+
+
+def _matches_source_number(claim: str, source_numbers: set[float]) -> bool:
+    """Accept exact values or ordinary decimal rounding of an input value."""
+    value = float(claim)
+    decimals = len(claim.partition(".")[2]) if "." in claim else 0
+    # A value printed to d decimal places represents a rounding interval with
+    # half a unit in its final place. Keep a tiny epsilon for binary floats.
+    tolerance = 0.5 * (10 ** -decimals) + 1e-12
+    return any(abs(value - source) <= tolerance for source in source_numbers)
 
 
 def edge_label(edge: dict[str, Any]) -> str:
@@ -40,8 +52,10 @@ def violations(answer: dict[str, Any], attribution: dict[str, Any], cards: list[
     if not isinstance(suggestion, dict):
         issues.append("Suggestion must be an object")
         suggestion = {}
-    prose += " " + " ".join(str(value) for value in suggestion.get("steps", []))
+    steps = [re.sub(r"^\s*\d+[.)]\s*", "", str(value))
+             for value in suggestion.get("steps", [])]
+    prose += " " + " ".join(steps)
     for match in NUMBER.finditer(prose):
-        if float(match.group()) not in source_numbers:
+        if not _matches_source_number(match.group(), source_numbers):
             issues.append(f"Unsupported number: {match.group()}")
     return issues

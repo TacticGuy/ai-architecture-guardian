@@ -65,6 +65,25 @@ def test_grounding_rejects_unknown_claims():
     assert len(issues) >= 3
 
 
+def test_grounding_accepts_normal_decimal_rounding_but_not_wrong_values():
+    data = sample()
+    data["risk_score"] = 0.408685
+    rounded = {"evidence": [], "principles": [], "explanation": "Risk is 0.409.",
+               "suggestion": {"steps": []}}
+    assert not any(issue.startswith("Unsupported number:") for issue in violations(rounded, data, []))
+    wrong = {**rounded, "explanation": "Risk is 123.456."}
+    assert "Unsupported number: 123.456" in violations(wrong, data, [])
+
+
+def test_grounding_ignores_numbered_step_prefixes_only():
+    data = sample()
+    numbered = {"evidence": [], "principles": [], "explanation": "",
+                "suggestion": {"steps": ["1. Add a test", "2) Run it"]}}
+    assert not any(issue.startswith("Unsupported number:") for issue in violations(numbered, data, []))
+    factual = {**numbered, "suggestion": {"steps": ["Change 123.456 modules"]}}
+    assert "Unsupported number: 123.456" in violations(factual, data, [])
+
+
 def test_grounding_rejects_malformed_collections_without_crashing():
     issues = violations({"evidence": "edge", "principles": "SRP", "suggestion": "move it"}, sample(), [])
     assert "Evidence must be a list" in issues
