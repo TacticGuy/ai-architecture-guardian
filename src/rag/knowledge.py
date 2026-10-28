@@ -23,6 +23,8 @@ import re
 from typing import Any
 
 SPLITS = ("train", "validation", "test")
+V5_SCHEMA = "attribution_v5/1"
+V5_LABEL = "future_coupling_v1"
 
 
 class KnowledgeError(ValueError):
@@ -77,6 +79,11 @@ def load_inputs(*, manifest_path: Path, fusion_dir: Path, xai_dir: Path | None, 
                 raise KnowledgeError(f"{path.name} explains {sample_id}, which is not in the manifest")
             if report["label"] != rows[sample_id]["label"]:
                 raise KnowledgeError(f"{path.name}: label differs from the manifest")
+            if report.get("schema") == V5_SCHEMA:
+                # v5 edge attributions explain one trained GNN seed; its own risk score is kept in the
+                # file, so it is not required to equal the mean-of-seeds score in predictions.csv.
+                explanations[sample_id] = report
+                continue
             if abs(report["probability"] - float(predictions[sample_id]["p_fusion"])) > 1e-5:
                 raise KnowledgeError(f"{path.name}: risk score differs from predictions.csv; "
                                      "re-run explain_prs.py after train_fusion.py")
@@ -133,7 +140,9 @@ def pr_card(inputs: dict[str, Any], sample_id: str) -> Card:
              f"Summary: true label {row['label']} ({'risky' if row['label'] else 'safe'}); fusion predicted "
              f"{'risky' if predicted else 'not risky'} with risk score {fmt(probability)}, which is "
              f"{'CORRECT' if correct else 'WRONG'}."]
-    if row["label"] == 1:
+    if meta.get("label_protocol") == V5_LABEL:
+        lines.append(_v5_label_text(row["label"], meta))
+    elif row["label"] == 1:
         evidence = meta.get("event_evidence") or {}
         trigger = meta.get("triggering_refactor_pr")
         when = (meta.get("triggering_refactor_merged_at") or "")[:10]
@@ -158,6 +167,8 @@ def pr_card(inputs: dict[str, Any], sample_id: str) -> Card:
     report = inputs["explanations"].get(sample_id)
     if report is None:
         lines.append("This PR has not been explained yet (run explain_prs.py with --split all to add it).")
+    elif report.get("schema") == V5_SCHEMA:
+        lines.extend(_v5_explanation_lines(report))
     else:
         parts = report["contributions"]
         lines.append(f"Layer A (logit units): base {signed(parts['base_logit'])}, structure from the GNN "
@@ -193,6 +204,52 @@ def pr_card(inputs: dict[str, Any], sample_id: str) -> Card:
                 meta={"sample_id": sample_id, "pr_number": _pr_order(sample_id)[1], "split": row["split"],
                       "label": row["label"], "probability": probability, "predicted_risky": predicted,
                       "explained": report is not None})
+
+
+def _v5_label_text(label: int, meta: dict[str, Any]) -> str:
+    """The v5 label in words: future coupling growth of the touched modules (src/dataset/future_coupling.py)."""
+    months = meta.get("horizon_months", 6)
+    excess = meta.get("excess_growth")
+    growth = f" (excess coupling growth {excess:+.2f} links per module; label 1 above +0.50)" \
+        if isinstance(excess, (int, float)) else ""
+    if label == 1 and meta.get("label_reason") == "joined_new_cycle":
+        return (f"True label: 1 (degrading). Within {months} months after the merge, a module this PR touched "
+                f"joined a new import cycle{growth}.")
+    if label == 1:
+        return (f"True label: 1 (degrading). Over the {months} months after the merge, the modules this PR touched "
+                f"gained dependency links faster than the project's own trend{growth}.")
+    return (f"True label: 0 (not degrading). Over the {months} months after the merge, the touched modules did not "
+            f"gain links faster than the project trend and joined no new import cycle{growth}.")
+
+
+def _v5_explanation_lines(report: dict[str, Any], top: int = 5) -> list[str]:
+    """Summarise a v5 attribution file: score split, strongest edges, hunks and faithfulness."""
+    parts = report["layer_a"]
+    lines = [f"Explanation (edge-level Integrated Gradients on one trained GNN, its own risk score "
+             f"{fmt(report['risk_score'])}): score parts in log-odds: base {signed(parts.get('base', 0.0))}, "
+             f"graph structure {signed(parts.get('structure_gnn', 0.0))}, pre-merge history "
+             f"{signed(parts.get('history', 0.0))}, diff {signed(parts.get('diff', 0.0))}."]
+    pushing = [edge for edge in report.get("top_edges", []) if edge["attribution"] > 0][:top]
+    if pushing:
+        described = [f"{_short(edge['source'])} {edge['relation']} {_short(edge['target'])} "
+                     f"({signed(edge['attribution'], 3)}{', new in this PR' if edge.get('added_in_pr') else ''})"
+                     for edge in pushing]
+        lines.append("Dependencies that pushed the risk up most: " + "; ".join(described) + ".")
+    hunks = report.get("top_hunks") or []
+    if hunks:
+        lines.append("Diff hunks over the most influential code: " + "; ".join(
+            f"{hunk['file']} lines {hunk['lines'][0]}-{hunk['lines'][1]} (effect {signed(hunk['effect'], 3)})"
+            for hunk in hunks[:3]) + ".")
+    if report.get("new_cycle_modules"):
+        lines.append(f"This PR's touched modules newly in an import cycle: {', '.join(report['new_cycle_modules'])}.")
+    lines.append(f"Explanation unfaithfulness {report.get('unfaithfulness', 0.0):.4f} (0 = the top 30 edges alone "
+                 "reproduce the prediction). The full edge graph is in the Attribution tab.")
+    return lines
+
+
+def _short(node_id: str) -> str:
+    """'src/flask/app.py:flask.app.Flask.run' -> 'flask.app.Flask.run'."""
+    return node_id.split(":", 1)[-1]
 
 
 def layer_a_in_words(structure: float, diff: float) -> str:
