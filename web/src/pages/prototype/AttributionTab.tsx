@@ -28,7 +28,7 @@ interface Explanation {
 }
 interface Attribution extends AttributionSummary {
   merged_at: string | null; label_reason: string | null;
-  layer_a: { base: number; structure_gnn: number; diff: number };
+  layer_a: { base: number; structure_gnn: number; diff: number; history?: number };  // history: v5.1 only
   changed_files: string[]; touched_modules: string[]; top_edges: Edge[];
   module_evidence: Record<string, ModuleEvidence>; pr_creates_cycle: boolean; new_cycle_modules: string[];
   structural_delta: Record<string, number>; top_hunks: Hunk[]; unfaithfulness: number; explainer: string;
@@ -206,6 +206,7 @@ function Detail({ data }: { data: Attribution }) {
         <DivergingBars rows={[
           { label: "Base (bias)", value: data.layer_a.base },
           { label: "Structure (GNN)", value: data.layer_a.structure_gnn },
+          ...(data.layer_a.history !== undefined ? [{ label: "Pre-merge history", value: data.layer_a.history }] : []),
           { label: "Diff text", value: data.layer_a.diff },
         ].map((row) => ({ ...row, value: Number(row.value.toFixed(3)), tone: row.value > 0 ? "risky" as const : "safe" as const }))} />
       </Panel>
