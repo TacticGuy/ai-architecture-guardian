@@ -1,0 +1,29 @@
+{
+  "_note": "synthetic example for tests only",
+  "schema": "attribution_v5/1",
+  "sample_id": "example/safe#1",
+  "repo": "example/safe",
+  "title": "Clarify parser error handling",
+  "merged_at": "2024-01-02T00:00:00+00:00",
+  "split": "test",
+  "label": 0,
+  "risk_score": 0.12,
+  "threshold": 0.47,
+  "predicted_degrading": false,
+  "layer_a": {"base": -1.5, "structure_gnn": -0.5, "history": -0.1, "diff": 0.1},
+  "history_features": {"touched_file_commits_6m": 2, "touched_file_churn_6m": 14, "recent_contributors": 1},
+  "changed_files": ["src/safe/parser.py"],
+  "touched_modules": ["safe.parser"],
+  "top_edges": [
+    {"source": "src/safe/parser.py:safe.parser.parse", "source_type": "function", "source_module": "safe.parser", "relation": "CALLS", "target": "src/safe/errors.py:safe.errors.InvalidInput", "target_type": "class", "target_module": "safe.errors", "attribution": -0.31, "added_in_pr": false},
+    {"source": "src/safe/parser.py:safe.parser.parse", "source_type": "function", "source_module": "safe.parser", "relation": "ACCESSES_GLOBAL", "target": "src/safe/parser.py:safe.parser.DEFAULT_LIMIT", "target_type": "global_variable", "target_module": "safe.parser", "attribution": 0.03, "added_in_pr": false}
+  ],
+  "top_nodes": [{"id": "src/safe/parser.py:safe.parser.parse", "type": "function", "module": "safe.parser", "file": "src/safe/parser.py", "attribution": -0.21, "touched": true}],
+  "module_evidence": {"safe.parser": {"ca_before": 2, "ce_before": 1, "ca_after": 2, "ce_after": 1, "in_import_cycle": false}},
+  "pr_creates_cycle": false,
+  "new_cycle_modules": [],
+  "structural_delta": {"internal_import_edge_count": 0, "global_access_edge_count": 0},
+  "top_hunks": [{"file": "src/safe/parser.py", "lines": [10, 12], "effect": -0.02, "snippet": ["+    raise InvalidInput(value)"]}],
+  "unfaithfulness": 0.09,
+  "explainer": "integrated_gradients_edge"
+}

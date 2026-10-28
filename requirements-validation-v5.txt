@@ -1,0 +1,7 @@
+# Extra packages for the v5 validation and tool baselines (on top of requirements.txt).
+# pycg is not listed: it needs Python 3.8-3.10 and goes in its own venv (see docs/validation_v5/graph_validation.md).
+grimp>=3.18
+radon>=6.0.1
+pylint>=4.1
+httpx>=0.28
+python-dotenv>=1.0

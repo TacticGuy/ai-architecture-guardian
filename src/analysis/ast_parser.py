@@ -32,6 +32,7 @@ def extract_repository_ast(repository_path: str | Path, analysis_settings: dict[
     imports: list[dict[str, str]] = []
     calls: list[dict[str, Any]] = []
     inherits: list[dict[str, Any]] = []
+    global_accesses: list[dict[str, str]] = []
     module_aliases: dict[str, dict[str, str]] = {}
     errors: list[dict[str, str]] = []
     parsed_files: list[str] = []
@@ -51,6 +52,7 @@ def extract_repository_ast(repository_path: str | Path, analysis_settings: dict[
         imports.extend(visitor.imports)
         calls.extend(visitor.calls)
         inherits.extend(visitor.inherits)
+        global_accesses.extend(visitor.global_accesses)
         if visitor.aliases:
             module_aliases[visitor.module_symbol["id"]] = dict(sorted(visitor.aliases.items()))
     return {
@@ -63,6 +65,9 @@ def extract_repository_ast(repository_path: str | Path, analysis_settings: dict[
         "calls": sorted(calls, key=lambda edge: (edge["source_id"], edge["target_name"])),
         # One record per (class, parent class) pair, resolved like calls.
         "inherits": sorted(inherits, key=lambda edge: (edge["source_id"], edge["target_name"])),
+        # One record per (function/method/class, module-level variable) it reads or writes.
+        # ``qualified_target`` is resolved to a ``global_variable`` node by the dependency graph.
+        "global_accesses": sorted(global_accesses, key=lambda edge: (edge["source_id"], edge["qualified_target"])),
         # For each module ID: which local names were imported, and from where.
         # Used to follow re-exports such as ``from .models import Response`` in __init__.py.
         "module_aliases": module_aliases,
@@ -144,6 +149,9 @@ class _SymbolVisitor(ast.NodeVisitor):
         self.inherits: list[dict[str, Any]] = []
         self.aliases: dict[str, str] = {}
         self.local_names: set[str] = set()
+        # Module-level variables (shared global state): name -> line of first assignment.
+        self.global_names: dict[str, int] = {}
+        self.global_accesses: list[dict[str, str]] = []
         self.scope: list[dict[str, str]] = []
         self.module_symbol = self._push_symbol("module", module_name, 1, len(self.source_lines))
         # A module's size is the number of lines in its file (an empty file is 0), counted
@@ -194,8 +202,51 @@ class _SymbolVisitor(ast.NodeVisitor):
                        "is_async": isinstance(node, ast.AsyncFunctionDef),
                        "parameters": _parameter_features(node.args),
                        "cyclomatic_complexity": calculate_cyclomatic_complexity(node)})
+        self._record_global_accesses(node, symbol["id"])
         self.generic_visit(node)
         self._pop_symbol()
+
+    def _record_global_accesses(self, function: ast.FunctionDef | ast.AsyncFunctionDef, source_id: str) -> None:
+        """Record module-level variables this function reads or writes (shared global state).
+
+        A name counts when it is declared ``global``, or read without being a parameter or a
+        local assignment and it is either one of this module's variables or an imported
+        name (``from config import SETTINGS``) or a dotted module attribute (``config.SETTINGS``).
+        Imported candidates only become edges if the target turns out to be a module variable.
+        """
+        declared = {name for child in ast.walk(function) if isinstance(child, ast.Global) for name in child.names}
+        arguments = function.args
+        parameters = {arg.arg for arg in (*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs)}
+        parameters |= {arg.arg for arg in (arguments.vararg, arguments.kwarg) if arg is not None}
+        assigned = {child.id for child in ast.walk(function)
+                    if isinstance(child, ast.Name) and isinstance(child.ctx, (ast.Store, ast.Del))} - declared
+        # Type annotations (``x: Alias``, ``-> Alias``, ``y: Alias = ...``) only name a type; they do
+        # not read or write shared state, so names inside them are not global accesses.
+        annotations = [arg.annotation for arg in (*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs,
+                                                  arguments.vararg, arguments.kwarg) if arg is not None]
+        annotations.append(function.returns)
+        annotations.extend(child.annotation for child in ast.walk(function) if isinstance(child, ast.AnnAssign))
+        annotation_nodes = {id(node) for annotation in annotations if annotation is not None
+                            for node in ast.walk(annotation)}
+        targets: set[str] = set()
+        for child in ast.walk(function):
+            if id(child) in annotation_nodes:
+                continue
+            if isinstance(child, ast.Name):
+                name = child.id
+                if name in declared:
+                    targets.add(f"{self.module_name}.{name}")
+                elif isinstance(child.ctx, ast.Load) and name not in parameters and name not in assigned:
+                    if name in self.global_names:
+                        targets.add(f"{self.module_name}.{name}")
+                    elif name in self.aliases and "." in self.aliases[name]:
+                        targets.add(self.aliases[name])
+            elif isinstance(child, ast.Attribute) and isinstance(child.value, ast.Name):
+                first = child.value.id
+                if first in self.aliases and first not in parameters and first not in assigned:
+                    targets.add(f"{self.aliases[first]}.{child.attr}")
+        for target in sorted(targets):
+            self.global_accesses.append({"source_id": source_id, "qualified_target": target})
 
     def visit_Import(self, node: ast.Import) -> None:
         for alias in node.names:
@@ -224,6 +275,10 @@ class _SymbolVisitor(ast.NodeVisitor):
 
     def visit_Module(self, node: ast.Module) -> None:
         self._collect_bindings(node)
+        for name, line in sorted(self.global_names.items(), key=lambda item: (item[1], item[0])):
+            symbol = self._push_symbol("global_variable", name, line, line)
+            symbol["loc"] = 1
+            self._pop_symbol()
         self.generic_visit(node)
 
     def _collect_bindings(self, tree: ast.Module) -> None:
@@ -248,6 +303,7 @@ class _SymbolVisitor(ast.NodeVisitor):
                         self.aliases[alias.asname or alias.name] = f"{base}{join}{alias.name}" if base else alias.name
         self.local_names = {statement.name for statement in tree.body
                             if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))}
+        self.global_names = _module_level_variables(tree.body, self.local_names | set(self.aliases))
 
     def _enclosing_class(self) -> str | None:
         for symbol in reversed(self.scope):
@@ -288,6 +344,43 @@ class _SymbolVisitor(ast.NodeVisitor):
         self.calls.append({"source_id": self.current["id"], "target_name": raw,
                            "qualified_target": qualified, "via_import": via_import})
         self.generic_visit(node)
+
+
+def _module_level_variables(body: list[ast.stmt], skip: set[str]) -> dict[str, int]:
+    """Names assigned at module level (also inside top-level if/try/with blocks).
+
+    Dunder names (``__all__``, ``__version__``) are module metadata, not shared state, and
+    names that are functions, classes or imports are already other kinds of nodes.
+    """
+    found: dict[str, int] = {}
+
+    def add(target: ast.AST, line: int) -> None:
+        if isinstance(target, ast.Name):
+            name = target.id
+            if not (name.startswith("__") and name.endswith("__")) and name not in skip:
+                found.setdefault(name, line)
+        elif isinstance(target, (ast.Tuple, ast.List)):
+            for element in target.elts:
+                add(element, line)
+
+    def walk(statements: list[ast.stmt]) -> None:
+        for statement in statements:
+            if isinstance(statement, ast.Assign):
+                for target in statement.targets:
+                    add(target, statement.lineno)
+            elif isinstance(statement, (ast.AnnAssign, ast.AugAssign)):
+                add(statement.target, statement.lineno)
+            elif isinstance(statement, ast.If):
+                walk(statement.body); walk(statement.orelse)
+            elif isinstance(statement, ast.Try):
+                walk(statement.body); walk(statement.orelse); walk(statement.finalbody)
+                for handler in statement.handlers:
+                    walk(handler.body)
+            elif isinstance(statement, (ast.With, ast.AsyncWith)):
+                walk(statement.body)
+
+    walk(body)
+    return found
 
 
 def _loc(node: ast.AST) -> int:

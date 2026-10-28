@@ -67,12 +67,57 @@ def test_topic_words_bring_the_model_and_dataset_cards(tmp_path):
     assert retriever.retrieve("Which PRs were false positives?", k=3)[0].card.id == "predictions:test"
 
 
+@pytest.mark.parametrize("question, card_id", [
+    ("How well does the fusion model do on the test split?", "model:fusion"),
+    ("Is fusion better than CodeReviewer?", "model:fusion"),
+    ("Which repositories are in the data?", "dataset"),
+    ("Did the GNN learn a shortcut like the merge date?", "model:shortcuts"),
+])
+def test_everyday_wordings_bring_the_right_card(tmp_path, question, card_id):
+    from tests.test_knowledge import holdout_gnn_metrics
+    paths = make_project(tmp_path, explained=("o/r#30",))
+    holdout_gnn_metrics(paths["gnn_metrics"])
+    inputs = load_inputs(manifest_path=paths["manifest"], fusion_dir=paths["fusion"], xai_dir=paths["xai"],
+                         samples_dir=paths["samples"], gnn_metrics_path=paths["gnn_metrics"])
+    cards = build_cards(inputs, paths["docs"])
+    ids = [hit.card.id for hit in Retriever(cards).retrieve(question, k=6)]
+    assert card_id in ids
+
+
+def test_a_general_question_gets_at_most_one_example_pr_and_finds_notes_by_file_title(tmp_path):
+    cards, _ = project_cards(tmp_path)
+    for card in cards:
+        if card.kind == "doc":
+            card.meta["section"] = "Limitations"
+    hits = Retriever(cards).retrieve("What are the limitations of risky prs?", k=6)
+    assert sum(hit.card.kind == "pr" for hit in hits) <= 1
+    assert any(hit.card.kind == "doc" for hit in hits)
+
+
+def test_topic_words_match_whole_words_only(tmp_path):
+    cards, _ = project_cards(tmp_path)
+    ids = [hit.card.id for hit in Retriever(cards).retrieve("Can you update me?", k=6)]
+    assert "model:shortcuts" not in ids
+
+
 def test_prediction_tables_follow_the_split_in_the_question(tmp_path):
     cards, _ = project_cards(tmp_path)
     retriever = Retriever(cards)
     assert retriever.retrieve("Which validation PRs were wrong?", k=3)[0].card.id == "predictions:validation"
     ids = [hit.card.id for hit in retriever.retrieve("What does layer B do?", k=6)]
     assert not any(card_id.startswith("predictions:") for card_id in ids)      # big tables only when asked
+
+
+def test_a_named_pr_brings_no_unrelated_pr_cards(tmp_path):
+    cards, _ = project_cards(tmp_path)
+    hits = Retriever(cards).retrieve("Why was PR #30 flagged as risky?", k=6)
+    assert hits[0].card.id == "pr:o/r#30"
+    assert [hit.card.id for hit in hits if hit.card.kind == "pr"] == ["pr:o/r#30"]
+
+
+def test_prompt_says_to_start_with_layer_a_and_not_to_credit_the_refactor_to_the_pr():
+    assert "start with layer A" in SYSTEM_PROMPT and "Negative values push the risk down" in SYSTEM_PROMPT
+    assert "reviewer's note describes the later refactor PR" in SYSTEM_PROMPT
 
 
 def test_a_named_pr_gets_only_two_extra_cards(tmp_path):

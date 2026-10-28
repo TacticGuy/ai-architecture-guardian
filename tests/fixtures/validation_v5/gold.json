@@ -1,0 +1,145 @@
+{
+  "_rules": "See README.md in this folder.",
+  "files": [
+    {
+      "repo": "pallets/flask", "tag": "3.1.3", "path": "src/flask/blueprints.py",
+      "labeller": "first labeller (draft by Claude, to be checked by Sai Praveen)",
+      "relations": [
+        {"type": "INHERITS", "source": "flask.blueprints.Blueprint", "target": "flask.sansio.blueprints.Blueprint"},
+        {"type": "CALLS", "source": "flask.blueprints.Blueprint.__init__", "target": "flask.sansio.blueprints.Blueprint.__init__"},
+        {"type": "CALLS", "source": "flask.blueprints.Blueprint.__init__", "target": "flask.cli.AppGroup"},
+        {"type": "CALLS", "source": "flask.blueprints.Blueprint.send_static_file", "target": "flask.blueprints.Blueprint.get_send_file_max_age"},
+        {"type": "CALLS", "source": "flask.blueprints.Blueprint.send_static_file", "target": "flask.helpers.send_from_directory"},
+        {"type": "ACCESSES_GLOBAL", "source": "flask.blueprints.Blueprint", "target": "flask.sansio.scaffold._sentinel",
+         "note": "default value of __init__'s cli_group, evaluated in the class body"},
+        {"type": "ACCESSES_GLOBAL", "source": "flask.blueprints.Blueprint.get_send_file_max_age", "target": "flask.globals.current_app"}
+      ]
+    },
+    {
+      "repo": "marshmallow-code/marshmallow", "tag": "4.3.1", "path": "src/marshmallow/class_registry.py",
+      "labeller": "first labeller (draft by Claude, to be checked by Sai Praveen)",
+      "relations": [
+        {"type": "ACCESSES_GLOBAL", "source": "marshmallow.class_registry.register", "target": "marshmallow.class_registry._registry"},
+        {"type": "ACCESSES_GLOBAL", "source": "marshmallow.class_registry.get_class", "target": "marshmallow.class_registry._registry"},
+        {"type": "CALLS", "source": "marshmallow.class_registry.get_class", "target": "marshmallow.exceptions.RegistryError"}
+      ]
+    },
+    {
+      "repo": "encode/starlette", "tag": "1.10.0", "path": "starlette/config.py",
+      "labeller": "first labeller (draft by Claude, to be checked by Sai Praveen)",
+      "relations": [
+        {"type": "INHERITS", "source": "starlette.config.EnvironError", "target": "builtins.Exception"},
+        {"type": "INHERITS", "source": "starlette.config.Environ", "target": "collections.abc.MutableMapping"},
+        {"type": "CALLS", "source": "starlette.config.Environ.__setitem__", "target": "starlette.config.EnvironError"},
+        {"type": "CALLS", "source": "starlette.config.Environ.__delitem__", "target": "starlette.config.EnvironError"},
+        {"type": "CALLS", "source": "starlette.config", "target": "starlette.config.Environ"},
+        {"type": "CALLS", "source": "starlette.config.Config.__init__", "target": "starlette.config.Config._read_file"},
+        {"type": "CALLS", "source": "starlette.config.Config.__call__", "target": "starlette.config.Config.get"},
+        {"type": "CALLS", "source": "starlette.config.Config.get", "target": "starlette.config.Config._perform_cast"},
+        {"type": "ACCESSES_GLOBAL", "source": "starlette.config.Config", "target": "starlette.config.environ",
+         "note": "default value of __init__'s environ, evaluated in the class body"}
+      ]
+    },
+    {
+      "repo": "Textualize/rich", "tag": "v15.0.0", "path": "rich/rule.py",
+      "labeller": "first labeller (draft by Claude, to be checked by Sai Praveen)",
+      "relations": [
+        {"type": "INHERITS", "source": "rich.rule.Rule", "target": "rich.jupyter.JupyterMixin"},
+        {"type": "CALLS", "source": "rich.rule.Rule.__init__", "target": "rich.cells.cell_len"},
+        {"type": "CALLS", "source": "rich.rule.Rule.__rich_console__", "target": "rich.cells.cell_len"},
+        {"type": "CALLS", "source": "rich.rule.Rule.__rich_console__", "target": "rich.rule.Rule._rule_line"},
+        {"type": "CALLS", "source": "rich.rule.Rule.__rich_console__", "target": "rich.console.Console.render_str"},
+        {"type": "CALLS", "source": "rich.rule.Rule.__rich_console__", "target": "rich.text.Text.expand_tabs"},
+        {"type": "CALLS", "source": "rich.rule.Rule.__rich_console__", "target": "rich.text.Text"},
+        {"type": "CALLS", "source": "rich.rule.Rule.__rich_console__", "target": "rich.text.Text.truncate"},
+        {"type": "CALLS", "source": "rich.rule.Rule.__rich_console__", "target": "rich.text.Text.append"},
+        {"type": "CALLS", "source": "rich.rule.Rule.__rich_console__", "target": "rich.cells.set_cell_size"},
+        {"type": "CALLS", "source": "rich.rule.Rule._rule_line", "target": "rich.text.Text"},
+        {"type": "CALLS", "source": "rich.rule.Rule._rule_line", "target": "rich.text.Text.truncate"},
+        {"type": "CALLS", "source": "rich.rule.Rule._rule_line", "target": "rich.cells.set_cell_size"},
+        {"type": "CALLS", "source": "rich.rule.Rule.__rich_measure__", "target": "rich.measure.Measurement"},
+        {"type": "CALLS", "source": "rich.rule", "target": "rich.console.Console"},
+        {"type": "CALLS", "source": "rich.rule", "target": "rich.console.Console.print"},
+        {"type": "CALLS", "source": "rich.rule", "target": "rich.rule.Rule"},
+        {"type": "ACCESSES_GLOBAL", "source": "rich.rule", "target": "rich.rule.text"},
+        {"type": "ACCESSES_GLOBAL", "source": "rich.rule", "target": "rich.rule.console"}
+      ]
+    },
+    {
+      "repo": "pallets/click", "tag": "8.5.0", "path": "src/click/formatting.py",
+      "labeller": "first labeller (draft by Claude, to be checked by Sai Praveen)",
+      "relations": [
+        {"type": "CALLS", "source": "click.formatting.measure_table", "target": "click._compat.term_len"},
+        {"type": "CALLS", "source": "click.formatting.wrap_text", "target": "click._textwrap.TextWrapper"},
+        {"type": "CALLS", "source": "click.formatting.wrap_text", "target": "click._textwrap.TextWrapper.extra_indent"},
+        {"type": "CALLS", "source": "click.formatting.wrap_text", "target": "click._textwrap.TextWrapper.indent_only"},
+        {"type": "CALLS", "source": "click.formatting.wrap_text", "target": "click.formatting.wrap_text._flush_par"},
+        {"type": "CALLS", "source": "click.formatting.wrap_text", "target": "click._compat.term_len"},
+        {"type": "CALLS", "source": "click.formatting.HelpFormatter.write_usage", "target": "click.formatting.HelpFormatter.write"},
+        {"type": "CALLS", "source": "click.formatting.HelpFormatter.write_usage", "target": "click._compat.term_len"},
+        {"type": "CALLS", "source": "click.formatting.HelpFormatter.write_usage", "target": "click.formatting.wrap_text"},
+        {"type": "CALLS", "source": "click.formatting.HelpFormatter.write_heading", "target": "click.formatting.HelpFormatter.write"},
+        {"type": "CALLS", "source": "click.formatting.HelpFormatter.write_paragraph", "target": "click.formatting.HelpFormatter.write"},
+        {"type": "CALLS", "source": "click.formatting.HelpFormatter.write_text", "target": "click.formatting.HelpFormatter.write"},
+        {"type": "CALLS", "source": "click.formatting.HelpFormatter.write_text", "target": "click.formatting.wrap_text"},
+        {"type": "CALLS", "source": "click.formatting.HelpFormatter.write_dl", "target": "click.formatting.measure_table"},
+        {"type": "CALLS", "source": "click.formatting.HelpFormatter.write_dl", "target": "click.formatting.iter_rows"},
+        {"type": "CALLS", "source": "click.formatting.HelpFormatter.write_dl", "target": "click.formatting.HelpFormatter.write"},
+        {"type": "CALLS", "source": "click.formatting.HelpFormatter.write_dl", "target": "click._compat.term_len"},
+        {"type": "CALLS", "source": "click.formatting.HelpFormatter.write_dl", "target": "click.formatting.wrap_text"},
+        {"type": "CALLS", "source": "click.formatting.HelpFormatter.section", "target": "click.formatting.HelpFormatter.write_paragraph"},
+        {"type": "CALLS", "source": "click.formatting.HelpFormatter.section", "target": "click.formatting.HelpFormatter.write_heading"},
+        {"type": "CALLS", "source": "click.formatting.HelpFormatter.section", "target": "click.formatting.HelpFormatter.indent"},
+        {"type": "CALLS", "source": "click.formatting.HelpFormatter.section", "target": "click.formatting.HelpFormatter.dedent"},
+        {"type": "CALLS", "source": "click.formatting.HelpFormatter.indentation", "target": "click.formatting.HelpFormatter.indent"},
+        {"type": "CALLS", "source": "click.formatting.HelpFormatter.indentation", "target": "click.formatting.HelpFormatter.dedent"},
+        {"type": "CALLS", "source": "click.formatting.join_options", "target": "click.parser._split_opt"},
+        {"type": "ACCESSES_GLOBAL", "source": "click.formatting.HelpFormatter.__init__", "target": "click.formatting.FORCED_WIDTH"}
+      ]
+    },
+    {
+      "repo": "psf/requests", "tag": "v2.34.2", "path": "src/requests/exceptions.py",
+      "labeller": "first labeller (draft by Claude, to be checked by Sai Praveen)",
+      "relations": [
+        {"type": "INHERITS", "source": "requests.exceptions.RequestException", "target": "builtins.OSError", "also_accept": ["builtins.IOError"]},
+        {"type": "INHERITS", "source": "requests.exceptions.InvalidJSONError", "target": "requests.exceptions.RequestException"},
+        {"type": "INHERITS", "source": "requests.exceptions.JSONDecodeError", "target": "requests.exceptions.InvalidJSONError"},
+        {"type": "INHERITS", "source": "requests.exceptions.JSONDecodeError", "target": "json.JSONDecodeError",
+         "also_accept": ["simplejson.JSONDecodeError", "requests.compat.JSONDecodeError"],
+         "note": "requests.compat picks simplejson's class when it is installed"},
+        {"type": "INHERITS", "source": "requests.exceptions.HTTPError", "target": "requests.exceptions.RequestException"},
+        {"type": "INHERITS", "source": "requests.exceptions.ConnectionError", "target": "requests.exceptions.RequestException"},
+        {"type": "INHERITS", "source": "requests.exceptions.ProxyError", "target": "requests.exceptions.ConnectionError"},
+        {"type": "INHERITS", "source": "requests.exceptions.SSLError", "target": "requests.exceptions.ConnectionError"},
+        {"type": "INHERITS", "source": "requests.exceptions.Timeout", "target": "requests.exceptions.RequestException"},
+        {"type": "INHERITS", "source": "requests.exceptions.ConnectTimeout", "target": "requests.exceptions.ConnectionError"},
+        {"type": "INHERITS", "source": "requests.exceptions.ConnectTimeout", "target": "requests.exceptions.Timeout"},
+        {"type": "INHERITS", "source": "requests.exceptions.ReadTimeout", "target": "requests.exceptions.Timeout"},
+        {"type": "INHERITS", "source": "requests.exceptions.URLRequired", "target": "requests.exceptions.RequestException"},
+        {"type": "INHERITS", "source": "requests.exceptions.TooManyRedirects", "target": "requests.exceptions.RequestException"},
+        {"type": "INHERITS", "source": "requests.exceptions.MissingSchema", "target": "requests.exceptions.RequestException"},
+        {"type": "INHERITS", "source": "requests.exceptions.MissingSchema", "target": "builtins.ValueError"},
+        {"type": "INHERITS", "source": "requests.exceptions.InvalidSchema", "target": "requests.exceptions.RequestException"},
+        {"type": "INHERITS", "source": "requests.exceptions.InvalidSchema", "target": "builtins.ValueError"},
+        {"type": "INHERITS", "source": "requests.exceptions.InvalidURL", "target": "requests.exceptions.RequestException"},
+        {"type": "INHERITS", "source": "requests.exceptions.InvalidURL", "target": "builtins.ValueError"},
+        {"type": "INHERITS", "source": "requests.exceptions.InvalidHeader", "target": "requests.exceptions.RequestException"},
+        {"type": "INHERITS", "source": "requests.exceptions.InvalidHeader", "target": "builtins.ValueError"},
+        {"type": "INHERITS", "source": "requests.exceptions.InvalidProxyURL", "target": "requests.exceptions.InvalidURL"},
+        {"type": "INHERITS", "source": "requests.exceptions.ChunkedEncodingError", "target": "requests.exceptions.RequestException"},
+        {"type": "INHERITS", "source": "requests.exceptions.ContentDecodingError", "target": "requests.exceptions.RequestException"},
+        {"type": "INHERITS", "source": "requests.exceptions.ContentDecodingError", "target": "urllib3.exceptions.HTTPError"},
+        {"type": "INHERITS", "source": "requests.exceptions.StreamConsumedError", "target": "requests.exceptions.RequestException"},
+        {"type": "INHERITS", "source": "requests.exceptions.StreamConsumedError", "target": "builtins.TypeError"},
+        {"type": "INHERITS", "source": "requests.exceptions.RetryError", "target": "requests.exceptions.RequestException"},
+        {"type": "INHERITS", "source": "requests.exceptions.UnrewindableBodyError", "target": "requests.exceptions.RequestException"},
+        {"type": "INHERITS", "source": "requests.exceptions.RequestsWarning", "target": "builtins.Warning"},
+        {"type": "INHERITS", "source": "requests.exceptions.FileModeWarning", "target": "requests.exceptions.RequestsWarning"},
+        {"type": "INHERITS", "source": "requests.exceptions.FileModeWarning", "target": "builtins.DeprecationWarning"},
+        {"type": "INHERITS", "source": "requests.exceptions.RequestsDependencyWarning", "target": "requests.exceptions.RequestsWarning"},
+        {"type": "CALLS", "source": "requests.exceptions.JSONDecodeError.__init__", "target": "requests.exceptions.RequestException.__init__",
+         "note": "InvalidJSONError.__init__ is inherited from RequestException"}
+      ]
+    }
+  ]
+}

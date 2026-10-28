@@ -17,7 +17,10 @@
     "lucide-react": "^1.58.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
+    "react-force-graph-2d": "^1.29.2",
+    "react-markdown": "^10.1.0",
     "react-router-dom": "^7.18.4",
+    "remark-gfm": "^4.0.1",
     "tailwind-merge": "^3.7.0"
   },
   "devDependencies": {

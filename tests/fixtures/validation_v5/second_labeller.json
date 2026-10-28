@@ -1,0 +1,6 @@
+{
+  "_instructions": "Label starlette/config.py (encode/starlette 1.10.0) on your own, following README.md, without looking at gold.json. Add one object per relation to 'relations', then set 'labeller' to your name.",
+  "repo": "encode/starlette", "tag": "1.10.0", "path": "starlette/config.py",
+  "labeller": null,
+  "relations": []
+}

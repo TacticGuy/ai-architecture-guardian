@@ -100,13 +100,73 @@ def test_one_card_per_pr_plus_tables_model_dataset_and_docs(tmp_path):
 def test_explained_pr_card_carries_label_evidence_scores_and_all_three_layers(tmp_path):
     text = cards_of(make_project(tmp_path))["pr:o/r#30"].text
     assert "True label: 1 (risky). Reviewed architecture refactor o/r#99 merged 2023-08-20" in text
-    assert "Reviewer rationale: Split App into Sans-IO base classes." in text
+    assert ("Reviewer's note on the later refactor o/r#99 (why that refactor counts as architectural; it describes "
+            "the refactor, not this PR's own change): Split App into Sans-IO base classes.") in text
     assert "Fusion risk score 0.765 (threshold 0.500): predicted risky, which is correct." in text
     assert "structure from the GNN -0.28, diff from CodeReviewer +0.34" in text
     assert "src/pkg/a.py lines 207-218 (effect +0.104; +6/-13 lines)" in text
     assert "src/pkg/cli.py +1.46 (not touched)" in text and "untouched files total +5.42" in text
     assert "In words: files this PR did NOT touch moved the structure score more than the files it touched " \
            "(+5.42 vs +3.56)" in text
+
+
+def test_pr_card_says_in_words_which_layer_a_part_moved_the_risk(tmp_path):
+    text = cards_of(make_project(tmp_path))["pr:o/r#30"].text
+    assert ("In words (layer A): the structure part pushed the risk down (-0.28) and the diff part pushed the risk "
+            "up (+0.34). The diff part is larger (+0.34 vs -0.28), so it had the bigger effect on this score.") in text
+    assert "negative values pushed the risk down, positive values pushed it up." in text
+
+
+@pytest.mark.parametrize("structure, diff, expected", [
+    (-1.42, 2.06, "The diff part is larger (+2.06 vs -1.42)"),
+    (-2.5, 0.3, "The structure part is larger (-2.50 vs +0.30)"),
+    (0.0, 0.0, "the structure part did not move the risk (+0.00) and the diff part did not move the risk (+0.00)."),
+])
+def test_layer_a_in_words_names_the_direction_and_the_bigger_part(structure, diff, expected):
+    from src.rag.knowledge import layer_a_in_words
+    text = layer_a_in_words(structure, diff)
+    assert expected in text
+    if structure == diff:
+        assert "larger" not in text
+
+
+def holdout_gnn_metrics(path: Path) -> None:
+    baseline = lambda f1, ap, features: {"feature_names": features, "test": {  # noqa: E731
+        "f1": f1, "pr_auc_average_precision": ap}}
+    path.write_text(json.dumps({
+        "split": "repository_holdout", "cutoffs": None, "status": "shortcut_check_failed",
+        "warning": "The GNN did not beat the strongest shortcut baseline on the held-out test set.",
+        "cohort": {"splits": {"train": {"repositories": {"o/r": {"total": 2, "risky": 1, "safe": 1}}},
+                              "validation": {"repositories": {"o/v": {"total": 2, "risky": 1, "safe": 1}}},
+                              "test": {"repositories": {"o/t": {"total": 3, "risky": 1, "safe": 2}}}}},
+        "shortcut_baselines": {"always_risky": baseline(0.765, 0.619, []),
+                               "date_and_repository_size": baseline(0.0, 0.933, ["merge_timestamp", "log_nodes"])},
+        "shortcut_check": {"best_baseline": "date_and_repository_size", "best_baseline_test_pr_auc": 0.933,
+                           "gnn_beats_best_baseline": False, "gnn_test_pr_auc": 0.905}}), encoding="utf-8")
+
+
+def test_shortcut_card_reports_every_baseline_and_whether_the_gnn_beat_them(tmp_path):
+    paths = make_project(tmp_path)
+    holdout_gnn_metrics(paths["gnn_metrics"])
+    cards = cards_of(paths)
+    text = cards["model:shortcuts"].text
+    assert "Merge date and repository size baseline (uses merge_timestamp, log_nodes): test F1 0.000, " \
+           "test PR-AUC 0.933." in text
+    assert "Always risky baseline (uses nothing (calls every PR risky)): test F1 0.765, test PR-AUC 0.619." in text
+    assert "the GNN (as trained) has test PR-AUC 0.905" in text and "so the GNN did NOT beat it." in text
+    assert "Check status: shortcut_check_failed." in text
+
+
+def test_dataset_card_names_the_holdout_repositories_per_split(tmp_path):
+    paths = make_project(tmp_path)
+    holdout_gnn_metrics(paths["gnn_metrics"])
+    text = cards_of(paths)["dataset"].text
+    assert "Split method: repository holdout." in text
+    assert "test repositories: o/t (3 PRs: 1 risky, 2 safe)." in text and "Split cutoffs" not in text
+
+
+def test_no_shortcut_card_without_shortcut_results(tmp_path):
+    assert "model:shortcuts" not in cards_of(make_project(tmp_path))
 
 
 def test_unexplained_and_safe_pr_cards_say_so(tmp_path):

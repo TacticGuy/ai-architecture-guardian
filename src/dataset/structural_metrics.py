@@ -14,6 +14,7 @@ METRIC_NAMES: tuple[str, ...] = (
     "import_edge_count",
     "call_edge_count",
     "inheritance_edge_count",
+    "global_access_edge_count",
     "module_count",
     "internal_import_edge_count",
     "dependency_density",
@@ -60,7 +61,7 @@ def calculate_structural_metrics(graph: dict[str, Any], features: dict[str, Any]
     ]
     edge_counts = {
         edge_type: sum(1 for edge in graph["edges"] if edge["type"] == edge_type)
-        for edge_type in ("CONTAINS", "IMPORTS", "CALLS", "INHERITS")
+        for edge_type in ("CONTAINS", "IMPORTS", "CALLS", "INHERITS", "ACCESSES_GLOBAL")
     }
     return {
         "node_count": len(graph["nodes"]),
@@ -69,6 +70,7 @@ def calculate_structural_metrics(graph: dict[str, Any], features: dict[str, Any]
         "import_edge_count": edge_counts["IMPORTS"],
         "call_edge_count": edge_counts["CALLS"],
         "inheritance_edge_count": edge_counts["INHERITS"],
+        "global_access_edge_count": edge_counts["ACCESSES_GLOBAL"],
         "module_count": n,
         "internal_import_edge_count": m,
         "dependency_density": density,

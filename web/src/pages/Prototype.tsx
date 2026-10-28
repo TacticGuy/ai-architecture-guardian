@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { Bot, GitPullRequest, LayoutDashboard, Search } from "lucide-react";
+import { Bot, GitPullRequest, LayoutDashboard, Network, Search } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
@@ -8,6 +8,7 @@ import { NavBar } from "@/components/NavBar";
 import { Notice } from "@/components/kit";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import AttributionTab from "@/pages/prototype/AttributionTab";
 import ChatTab from "@/pages/prototype/ChatTab";
 import ExplorerTab from "@/pages/prototype/ExplorerTab";
 import LiveTab from "@/pages/prototype/LiveTab";
@@ -18,6 +19,7 @@ const tabs = [
   { id: "explorer", label: "PR explorer", icon: Search },
   { id: "live", label: "Live GitHub PR", icon: GitPullRequest },
   { id: "chat", label: "Ask the chatbot", icon: Bot },
+  { id: "attribution", label: "Attribution (v5)", icon: Network },
 ] as const;
 type TabId = (typeof tabs)[number]["id"];
 
@@ -32,7 +34,7 @@ export default function Prototype() {
       .then((result) => {
         setVersions(result.versions);
         setVersion(result.default ?? undefined);
-        if (!result.default) setError("No knowledge base found. Run: python scripts/build_kb.py --manifest artifacts/gnn_embeddings_v3.json");
+        if (!result.default) setError("No knowledge base found. Build one with: python scripts/build_kb.py --manifest artifacts/gnn_embeddings_<version>.json");
       })
       .catch((exc: Error) => setError(exc.message));
   }, []);
@@ -47,8 +49,8 @@ export default function Prototype() {
               <p className="font-mono text-xs uppercase tracking-[0.08em] text-muted-foreground">Prototype</p>
               <h1 className="mt-2 text-3xl font-semibold tracking-tight sm:text-4xl">AI Architecture Guardian</h1>
               <p className="mt-3 leading-7 text-muted-foreground">
-                Predicts whether a merged Python PR touches code that will need an architectural refactor within six
-                months, and explains why.{" "}
+                Predicts, before a Python PR is merged, whether the code it touches will become more tightly coupled
+                over the next six months, and explains why.{" "}
                 <Link to="/" className="underline underline-offset-4 hover:text-foreground">About the project</Link>
               </p>
             </div>
@@ -84,8 +86,9 @@ export default function Prototype() {
         </div>
 
         <div className="mt-8">
-          {error && <Notice kind="error">{error}</Notice>}
-          {version && (
+          {error && tab !== "attribution" && <Notice kind="error">{error}</Notice>}
+          {tab === "attribution" && <AttributionTab />}
+          {version && tab !== "attribution" && (
             <motion.div key={`${tab}-${version}`} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35 }}>
               {tab === "overview" && <OverviewTab version={version} />}
               {tab === "explorer" && <ExplorerTab version={version} />}

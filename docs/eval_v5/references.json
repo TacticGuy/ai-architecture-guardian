@@ -1,0 +1,287 @@
+{
+  "_note": "LLM-drafted from the real v5 attribution files and public GitHub diffs; independent human review is pending. Synthetic fixtures and generated RAG answers were not used.",
+  "_reference_author": "Codex (LLM)",
+  "_review_status": "human review pending",
+  "items": [
+    {
+      "sample_id": "arrow-py/arrow#1021",
+      "attribution_path": "data/xai_v5/arrow-py__arrow__1021.json",
+      "reference_explanation": "The model narrowly predicts degradation, but the architectural evidence is weak. The change stays inside arrow.locales, its incoming and outgoing coupling do not increase, and the strongest attributions are existing CONTAINS edges around Locale methods rather than new dependencies. The diff reorganizes Czech time-frame forms and selection logic without linking another project module.",
+      "reference_fix": "Do not introduce an architectural refactor solely for this score. Keep the Czech formatting logic local to arrow/locales.py and add focused past/future plural-form tests.",
+      "relevant_principles": ["COHESIVE_MODULE", "CONTRACT_TESTS"]
+    },
+    {
+      "sample_id": "arrow-py/arrow#1031",
+      "attribution_path": "data/xai_v5/arrow-py__arrow__1031.json",
+      "reference_explanation": "The model narrowly predicts degradation, although the graph does not show dependency growth. The touched arrow.locales module keeps the same coupling, while existing CONTAINS edges around Locale methods carry the positive attribution. The diff replaces paired Finnish strings with explicit past and future mappings inside the same module.",
+      "reference_fix": "Keep the Finnish-locale refactor inside arrow/locales.py and protect the behavior with past/future formatting tests; no module move is justified by this evidence.",
+      "relevant_principles": ["COHESIVE_MODULE", "CONTRACT_TESTS"]
+    },
+    {
+      "sample_id": "arrow-py/arrow#708",
+      "attribution_path": "data/xai_v5/arrow-py__arrow__708.json",
+      "reference_explanation": "The model predicts degradation only slightly above its threshold, but the evidence points the other way. The existing import from arrow.__init__ to arrow._version has a strong negative attribution, no dependency was added, and arrow._version keeps one incoming and zero outgoing project links. The production change is only a version-string update.",
+      "reference_fix": "No architectural fix is warranted. Keep version metadata isolated in arrow/_version.py and retain a release check that verifies the exported version.",
+      "relevant_principles": ["PACKAGE_API", "CONTRACT_TESTS"]
+    },
+    {
+      "sample_id": "arrow-py/arrow#765",
+      "attribution_path": "data/xai_v5/arrow-py__arrow__765.json",
+      "reference_explanation": "The model predicts this PR as safe. The locale module has no new outgoing project dependency, and its strongest positive signals are existing CONTAINS edges rather than cross-module calls. The only production addition looks up an existing locale class through the module registry; most of the PR converts tests to pytest fixtures.",
+      "reference_fix": "No structural rewrite is needed. Keep the registry lookup behind get_locale_by_class_name and test unsupported and valid class names so callers do not depend on the module globals directly.",
+      "relevant_principles": ["HIDDEN_REGISTRY", "CONTRACT_TESTS"]
+    },
+    {
+      "sample_id": "arrow-py/arrow#776",
+      "attribution_path": "data/xai_v5/arrow-py__arrow__776.json",
+      "reference_explanation": "The model predicts this PR as safe. Coupling for arrow.locales is unchanged and the attributed edges are existing containment relationships inside the locale hierarchy. The diff adds Traditional Chinese week strings and corrects localized day names without introducing a project dependency.",
+      "reference_fix": "Keep the translation data in the existing locale class and retain the new week-format tests; no architecture change is indicated.",
+      "relevant_principles": ["COHESIVE_MODULE", "CONTRACT_TESTS"]
+    },
+    {
+      "sample_id": "arrow-py/arrow#826",
+      "attribution_path": "data/xai_v5/arrow-py__arrow__826.json",
+      "reference_explanation": "The model predicts degradation just above the threshold, but the structural evidence is weak. The only touched production module is arrow._version, with unchanged coupling, and the existing import from the package root has a negative attribution. The code change updates the release version while the rest of the diff is changelog and documentation maintenance.",
+      "reference_fix": "No refactoring is needed. Keep release metadata in arrow/_version.py and verify the package export matches it during release tests.",
+      "relevant_principles": ["PACKAGE_API", "CONTRACT_TESTS"]
+    },
+    {
+      "sample_id": "arrow-py/arrow#843",
+      "attribution_path": "data/xai_v5/arrow-py__arrow__843.json",
+      "reference_explanation": "The model predicts degradation only narrowly. arrow._version retains one incoming and no outgoing project dependencies, and its existing package import has negative attribution. The production edit is a version bump; the large-looking diff is release documentation rather than a new code relationship.",
+      "reference_fix": "Do not refactor the module for this result. Continue isolating the version constant and test that the public package version is synchronized.",
+      "relevant_principles": ["PACKAGE_API", "CONTRACT_TESTS"]
+    },
+    {
+      "sample_id": "arrow-py/arrow#901",
+      "attribution_path": "data/xai_v5/arrow-py__arrow__901.json",
+      "reference_explanation": "The model predicts degradation, but the score is driven by small existing CONTAINS attributions in arrow.locales. Coupling does not change and the GitHub diff only corrects a docstring typo from 'inpute' to 'input'. There is no new dependency or behavioral path to refactor.",
+      "reference_fix": "No architectural action is appropriate; merge the documentation correction and rely on the existing locale tests.",
+      "relevant_principles": ["COHESIVE_MODULE", "CONTRACT_TESTS"]
+    },
+    {
+      "sample_id": "arrow-py/arrow#920",
+      "attribution_path": "data/xai_v5/arrow-py__arrow__920.json",
+      "reference_explanation": "The model predicts this refactor as safe. It removes reflective class discovery and keeps arrow.locales coupling unchanged, while the strongest structural attribution is negative. The new __init_subclass__ hook writes to a module-level locale map, so the remaining design concern is hidden mutable registry state rather than added inter-module coupling.",
+      "reference_fix": "Keep registration behind Locale.__init_subclass__ and get_locale, and add tests that reset or isolate _locale_map when duplicate and custom locales are exercised.",
+      "relevant_principles": ["HIDDEN_REGISTRY", "GLOBAL_MUTABLE_STATE", "CONTRACT_TESTS"]
+    },
+    {
+      "sample_id": "arrow-py/arrow#927",
+      "attribution_path": "data/xai_v5/arrow-py__arrow__927.json",
+      "reference_explanation": "The model predicts degradation by a small margin, but arrow._version has unchanged coupling and the package import into it has negative attribution. The production change is a version constant update associated with release notes. No new architectural dependency appears in the diff.",
+      "reference_fix": "No refactor is justified. Keep the version constant isolated and validate it through the release pipeline.",
+      "relevant_principles": ["PACKAGE_API", "CONTRACT_TESTS"]
+    },
+    {
+      "sample_id": "celery/celery#4754",
+      "attribution_path": "data/xai_v5/celery__celery__4754.json",
+      "reference_explanation": "The model predicts this PR as safe. celery.concurrency.gevent keeps the same two outgoing dependencies, and the modified external import and inheritance signals have negative attribution. The diff corrects Greenlet imports from gevent.greenlet to gevent without changing Celery's internal module boundary.",
+      "reference_fix": "Keep the external compatibility import localized in celery/concurrency/gevent.py and retain an import smoke test for supported gevent versions.",
+      "relevant_principles": ["REUSE_DIRECTION", "CONTRACT_TESTS"]
+    },
+    {
+      "sample_id": "celery/celery#5951",
+      "attribution_path": "data/xai_v5/celery__celery__5951.json",
+      "reference_explanation": "The model predicts this PR as safe. The database backend's coupling remains unchanged, and its existing import of database.models has a small negative attribution. The change only avoids decoding args or kwargs when their stored value is None.",
+      "reference_fix": "No structural change is required; keep the None handling local and add regression tests for missing, null, and populated payload fields.",
+      "relevant_principles": ["COHESIVE_MODULE", "CONTRACT_TESTS"]
+    },
+    {
+      "sample_id": "celery/celery#6524",
+      "attribution_path": "data/xai_v5/celery__celery__6524.json",
+      "reference_explanation": "The model predicts this PR as safe and no module coupling changes. The diff intentionally replaces an instance cache with a module-level LRUCache shared by all DummyClient instances, while the strongest containment and call attributions are mostly negative. The architectural risk is shared mutable state across tests and clients, not a new module edge.",
+      "reference_fix": "Encapsulate the shared cache behind a small accessor with an explicit reset hook, and test thread sharing and test isolation rather than exposing _DUMMY_CLIENT_CACHE to callers.",
+      "relevant_principles": ["GLOBAL_MUTABLE_STATE", "EXPLICIT_CONFIGURATION", "CONTRACT_TESTS"]
+    },
+    {
+      "sample_id": "celery/celery#6823",
+      "attribution_path": "data/xai_v5/celery__celery__6823.json",
+      "reference_explanation": "The model predicts this PR as safe. celery.backends.consul retains the same coupling and the new external client calls carry negative attribution. The diff creates a fresh Consul client per operation, with an optional shared client, to keep request and response state correctly paired.",
+      "reference_fix": "Keep client construction behind the client() method and inject or select the one-client policy through configuration; cover both policies with backend tests.",
+      "relevant_principles": ["EXPLICIT_DEPENDENCIES", "DIP", "CONTRACT_TESTS"]
+    },
+    {
+      "sample_id": "celery/celery#9465",
+      "attribution_path": "data/xai_v5/celery__celery__9465.json",
+      "reference_explanation": "The model predicts this PR as safe. The Cassandra backend keeps its six outgoing dependencies and no new cross-module edge is attributed. The change only fixes precedence between a constructor port, configured port, and the default value.",
+      "reference_fix": "Keep the configuration fallback in the backend constructor and retain tests for explicit, configured, and default ports; no architectural refactor is needed.",
+      "relevant_principles": ["EXPLICIT_CONFIGURATION", "CONTRACT_TESTS"]
+    },
+    {
+      "sample_id": "celery/celery#9865",
+      "attribution_path": "data/xai_v5/celery__celery__9865.json",
+      "reference_explanation": "The model predicts this PR as safe. celery.backends.couchdb keeps the same three outgoing dependencies, while its existing calls and imports have negative attribution; only a small existing global access is positive. The production fix normalizes the key to text before deletion.",
+      "reference_fix": "Keep byte-to-text conversion at the CouchDB boundary and retain regression tests for both byte and string task IDs.",
+      "relevant_principles": ["NARROW_BOUNDARY", "CONTRACT_TESTS"]
+    },
+    {
+      "sample_id": "celery/celery#9879",
+      "attribution_path": "data/xai_v5/celery__celery__9879.json",
+      "reference_explanation": "The model narrowly predicts degradation. The Redis backend already has high efferent coupling at 17 and the PR adds credential-provider construction and dynamic symbol lookup, although the module's coupling count does not increase. Most top structural attributions are existing containment edges, so the warning is about the breadth of backend responsibilities rather than a proven new graph link.",
+      "reference_fix": "Extract credential-provider resolution and validation into a small helper or adapter used by RedisBackend, keeping connection configuration separate from dynamic provider loading.",
+      "relevant_principles": ["EFFERENT_COUPLING", "DIP", "PYTHON_PROTOCOL"]
+    },
+    {
+      "sample_id": "encode/django-rest-framework#5753",
+      "attribution_path": "data/xai_v5/encode__django-rest-framework__5753.json",
+      "reference_explanation": "The model predicts the permission-composition feature as safe. rest_framework.permissions keeps its single outgoing project dependency, and the newly attributed calls point outside the project rather than coupling two DRF modules. The diff adds operator objects inside the permission module to compose existing permission classes.",
+      "reference_fix": "Keep the operator implementation private to permissions.py and add contract tests for AND, OR, and negation behavior; no module split is needed.",
+      "relevant_principles": ["OCP", "COMPOSITION", "CONTRACT_TESTS"]
+    },
+    {
+      "sample_id": "encode/django-rest-framework#5818",
+      "attribution_path": "data/xai_v5/encode__django-rest-framework__5818.json",
+      "reference_explanation": "The model predicts this PR as safe. The authtoken view retains the same eight outgoing dependencies, and its imports and calls have negative attribution. The actual diff only reorders coreapi, coreschema, and APIView imports, so it does not create a new design relationship.",
+      "reference_fix": "No architectural fix is appropriate; keep import ordering consistent and rely on import and schema tests.",
+      "relevant_principles": ["PACKAGE_API", "CONTRACT_TESTS"]
+    },
+    {
+      "sample_id": "encode/django-rest-framework#6633",
+      "attribution_path": "data/xai_v5/encode__django-rest-framework__6633.json",
+      "reference_explanation": "The model narrowly predicts degradation, but the five touched modules keep their coupling counts unchanged. rest_framework.renderers is already part of an import cycle, while the strongest attributions are existing containment edges rather than new imports. The diff removes explicit UTF-8 arguments and Python 2 compatibility branches across encoding boundaries.",
+      "reference_fix": "Do not add a broad refactor for this score. Keep encoding conversions at parser and renderer boundaries, run the existing cycle check, and add Unicode round-trip tests for every touched boundary.",
+      "relevant_principles": ["ADP", "NARROW_BOUNDARY", "CONTRACT_TESTS"]
+    },
+    {
+      "sample_id": "encode/django-rest-framework#7530",
+      "attribution_path": "data/xai_v5/encode__django-rest-framework__7530.json",
+      "reference_explanation": "The model predicts this renderer fix as safe. rest_framework.renderers remains at seven incoming and sixteen outgoing dependencies, although it is already in an import cycle. The diff adds local ListSerializer handling and does not introduce another project dependency.",
+      "reference_fix": "Keep ListSerializer handling inside the renderer helper and preserve the new serializer and list-serializer regression tests; address the pre-existing cycle separately.",
+      "relevant_principles": ["ADP", "SRP", "CONTRACT_TESTS"]
+    },
+    {
+      "sample_id": "encode/django-rest-framework#9525",
+      "attribution_path": "data/xai_v5/encode__django-rest-framework__9525.json",
+      "reference_explanation": "The model predicts degradation, but the diff removes a deprecated compatibility method and warning class. Coupling falls for both the package root and schemas.openapi, and the strongest attribution on the removed method is negative. schemas.openapi remains in a pre-existing cycle, but this PR does not add that cycle.",
+      "reference_fix": "No replacement abstraction is needed. Remove the deprecated path as planned, keep get_reference as the sole API, and run compatibility tests for schema subclasses.",
+      "relevant_principles": ["PACKAGE_API", "ADP", "CONTRACT_TESTS"]
+    },
+    {
+      "sample_id": "httpie/cli#1088",
+      "attribution_path": "data/xai_v5/httpie__cli__1088.json",
+      "reference_explanation": "The model predicts degradation, driven by positive structure attribution in httpie.core. The module already depends on nine project modules and the strongest relevant call is internal to core; the diff repairs nested control flow for redirected streamed uploads without changing coupling. This is a maintainability warning around a central orchestration function, not evidence of a new dependency.",
+      "reference_fix": "Extract the decision for body output and separators into a small pure helper inside httpie/core.py and keep the new redirect tests around it.",
+      "relevant_principles": ["SRP", "COHESIVE_MODULE", "CONTRACT_TESTS"]
+    },
+    {
+      "sample_id": "httpie/cli#1113",
+      "attribution_path": "data/xai_v5/httpie__cli__1113.json",
+      "reference_explanation": "The model predicts degradation from positive structure attribution in httpie.downloads, although its three outgoing dependencies do not change. Existing containment edges around download status code are the strongest signals. The diff consistently replaces wall-clock time with monotonic time and simplifies zero-division handling inside the same module.",
+      "reference_fix": "Keep timing calculations cohesive in a small download-speed helper and retain tests for zero elapsed time, missing totals, and monotonic progress.",
+      "relevant_principles": ["SRP", "COHESIVE_MODULE", "CONTRACT_TESTS"]
+    },
+    {
+      "sample_id": "httpie/cli#1140",
+      "attribution_path": "data/xai_v5/httpie__cli__1140.json",
+      "reference_explanation": "The model predicts this release PR as safe. The httpie package root retains four incoming and no outgoing project dependencies, with several existing imports carrying negative attribution. The production edit changes only the package version string.",
+      "reference_fix": "No architectural change is needed; keep version metadata at the package boundary and verify it in the release pipeline.",
+      "relevant_principles": ["PACKAGE_API", "CONTRACT_TESTS"]
+    },
+    {
+      "sample_id": "httpie/cli#1225",
+      "attribution_path": "data/xai_v5/httpie__cli__1225.json",
+      "reference_explanation": "The model predicts this separator feature as safe. constants and requestitems keep the same coupling, and the strongest cross-module requestitems call has negative attribution. The diff adds a header-from-file separator to the existing parsing table rather than creating a new architectural path.",
+      "reference_fix": "Keep separator definitions centralized in constants.py and processing in requestitems.py, with table-driven tests for every @ suffix.",
+      "relevant_principles": ["COHESIVE_MODULE", "NARROW_BOUNDARY", "CONTRACT_TESTS"]
+    },
+    {
+      "sample_id": "httpie/cli#1232",
+      "attribution_path": "data/xai_v5/httpie__cli__1232.json",
+      "reference_explanation": "The model predicts the benchmarking infrastructure as safe. It adds isolated extras.profiling modules with only one internal dependency, and the positive new calls belong to the benchmark runner rather than the HTTPie runtime. The production package graph is not made more coupled by these tooling files.",
+      "reference_fix": "Keep benchmark orchestration under extras/profiling and avoid importing it from the runtime package; add a smoke test for the benchmark command.",
+      "relevant_principles": ["SRP", "COHESIVE_MODULE", "REUSE_DIRECTION"]
+    },
+    {
+      "sample_id": "httpie/cli#1272",
+      "attribution_path": "data/xai_v5/httpie__cli__1272.json",
+      "reference_explanation": "The model predicts this release update as safe. The package root keeps five incoming and zero outgoing dependencies, and its major incoming imports have negative attribution. The production change only replaces the development version with the 3.0 release version.",
+      "reference_fix": "No refactor is warranted; keep the version value at the package boundary and validate it during release packaging.",
+      "relevant_principles": ["PACKAGE_API", "CONTRACT_TESTS"]
+    },
+    {
+      "sample_id": "marshmallow-code/marshmallow#1403",
+      "attribution_path": "data/xai_v5/marshmallow-code__marshmallow__1403.json",
+      "reference_explanation": "The model predicts this PR as safe. marshmallow.fields keeps the same coupling and the strongest attributions on its numeric classes are negative containment signals. The diff restores Integer and Decimal as subclasses of the public Number field, so the important architectural concern is preserving substitution behavior inside an already cyclic module.",
+      "reference_fix": "Keep Number as the single numeric base and add contract tests showing Integer and Decimal remain substitutable through the Number API; handle the pre-existing import cycle separately.",
+      "relevant_principles": ["LSP", "COMPOSITION", "ADP"]
+    },
+    {
+      "sample_id": "sphinx-doc/sphinx#6654",
+      "attribution_path": "data/xai_v5/sphinx-doc__sphinx__6654.json",
+      "reference_explanation": "The model predicts this PR as safe. The utility script retains one outgoing dependency and no new project link, while the changed write call has negative hunk attribution. The diff correctly writes text rather than encoded bytes to the already opened text file.",
+      "reference_fix": "No structural refactor is needed; keep the text/bytes conversion at the file boundary and retain a generator output test.",
+      "relevant_principles": ["NARROW_BOUNDARY", "CONTRACT_TESTS"]
+    },
+    {
+      "sample_id": "sphinx-doc/sphinx#8824",
+      "attribution_path": "data/xai_v5/sphinx-doc__sphinx__8824.json",
+      "reference_explanation": "The model predicts degradation from positive structure attribution across linkcheck and autodoc. Neither touched module gains coupling, but autodoc.directive remains in an import cycle and linkcheck already has twelve outgoing dependencies. The diff extracts ignored-URI checking and extends option-merging behavior, so the warning concerns two broad modules changed together rather than a new dependency.",
+      "reference_fix": "Keep is_ignored_uri as the single link-filter helper and isolate autodoc option merging in its own tested helper; do not introduce another cross-module utility.",
+      "relevant_principles": ["ADP", "SRP", "EFFERENT_COUPLING"]
+    },
+    {
+      "sample_id": "Textualize/rich#1655",
+      "attribution_path": "data/xai_v5/Textualize__rich__1655.json",
+      "reference_explanation": "The model narrowly predicts degradation. rich.markdown keeps the same thirteen outgoing dependencies and remains in an existing import cycle, while the code change only passes word_wrap=True to Syntax. The attributed structure is mostly existing containment, so the architectural evidence for this PR is weak.",
+      "reference_fix": "Keep the option local to the Markdown code-block renderer and add a rendering test for narrow consoles; investigate the existing markdown cycle separately.",
+      "relevant_principles": ["ADP", "COHESIVE_MODULE", "CONTRACT_TESTS"]
+    },
+    {
+      "sample_id": "Textualize/rich#207",
+      "attribution_path": "data/xai_v5/Textualize__rich__207.json",
+      "reference_explanation": "The model predicts degradation with strong positive structure attribution. rich.console is a major hub with 34 incoming and 24 outgoing dependencies, and both console and rule are in import cycles; the strongest calls remain inside console or go to external utilities. The diff expands Rule's public API and rendering logic to support multi-character rules, increasing responsibility in an already central boundary.",
+      "reference_fix": "Keep multi-character sizing and truncation inside Rule, with Console only forwarding arguments, and add compatibility tests for the deprecated character parameter before any broader hub refactor.",
+      "relevant_principles": ["AFFERENT_COUPLING", "NARROW_BOUNDARY", "ADP"]
+    },
+    {
+      "sample_id": "Textualize/rich#2439",
+      "attribution_path": "data/xai_v5/Textualize__rich__2439.json",
+      "reference_explanation": "The model predicts the parser migration as safe. rich.markdown removes one outgoing dependency overall, although it adds positively attributed imports for the replacement parser and remains in an import cycle. The substantial diff keeps parsing and element construction within the markdown module rather than spreading parser details across Rich.",
+      "reference_fix": "Keep the markdown-it token adapter private to rich/markdown.py, add parity tests for links, images, fences, and tables, and monitor the pre-existing cycle without adding a new shared parser module.",
+      "relevant_principles": ["ADP", "REUSE_DIRECTION", "CONTRACT_TESTS"]
+    },
+    {
+      "sample_id": "Textualize/textual#1182",
+      "attribution_path": "data/xai_v5/Textualize__textual__1182.json",
+      "reference_explanation": "The model narrowly predicts degradation from positive structure attribution in textual._border. The module's four incoming and four outgoing dependencies are unchanged, and the diff removes the Border class and unused Rich rendering code rather than adding a dependency. The score therefore reflects existing module structure more than the specific deletion.",
+      "reference_fix": "Do not add a compensating abstraction. Keep the remaining border functions cohesive in _border.py and run rendering regressions for every supported border style.",
+      "relevant_principles": ["COHESIVE_MODULE", "SRP", "CONTRACT_TESTS"]
+    },
+    {
+      "sample_id": "Textualize/textual#2272",
+      "attribution_path": "data/xai_v5/Textualize__textual__2272.json",
+      "reference_explanation": "The model predicts degradation. DataTable gains one outgoing dependency and the PR introduces textual.renderables.styled to layer base, cell, and component styles. The strongest relevant call stays inside DataTable, while the new helper has no outgoing project dependencies, so the risk is a new reusable boundary that could grow beyond its narrow purpose.",
+      "reference_fix": "Keep Styled minimal and specific to style layering, and test that DataTable owns ordering decisions rather than moving widget policy into the helper.",
+      "relevant_principles": ["CCP", "REUSE_DIRECTION", "NARROW_BOUNDARY"]
+    },
+    {
+      "sample_id": "Textualize/textual#2755",
+      "attribution_path": "data/xai_v5/Textualize__textual__2755.json",
+      "reference_explanation": "The model predicts this PR as safe. Tooltip keeps the same two incoming and two outgoing dependencies, and its import from the widgets package has negative attribution. The diff only disables inherited CSS for Tooltip to keep it outside the main DOM styling behavior.",
+      "reference_fix": "Keep the behavior expressed on Tooltip itself and retain tests for isolated queries and CSS inheritance; no module move is needed.",
+      "relevant_principles": ["LSP", "COHESIVE_MODULE", "CONTRACT_TESTS"]
+    },
+    {
+      "sample_id": "Textualize/textual#3286",
+      "attribution_path": "data/xai_v5/Textualize__textual__3286.json",
+      "reference_explanation": "The model predicts degradation. textual._types gains another incoming dependency and ProgressBar gains an outgoing dependency to support a shared UnusedParameter sentinel; all three touched modules are already in import cycles. The strongest hunk removes ambiguity between an omitted argument and an explicit None, but it also expands a central shared-types boundary.",
+      "reference_fix": "Keep the sentinel contract narrow and avoid adding ProgressBar-specific behavior to _types; add update tests for omitted values, explicit None, and numeric progress while separately tracking the existing cycles.",
+      "relevant_principles": ["ADP", "SDP", "NARROW_BOUNDARY"]
+    },
+    {
+      "sample_id": "Textualize/textual#4280",
+      "attribution_path": "data/xai_v5/Textualize__textual__4280.json",
+      "reference_explanation": "The model narrowly predicts degradation, but textual.widgets._select keeps the same fourteen outgoing dependencies and no new graph edge appears. The diff adds a local handler that stops OptionHighlighted events from leaking out of Select. Positive attribution comes mainly from existing containment elsewhere in the widget system.",
+      "reference_fix": "Keep event containment inside Select and add a regression test proving the event does not escape; no architectural extraction is justified by this change.",
+      "relevant_principles": ["COHESIVE_MODULE", "NARROW_BOUNDARY", "CONTRACT_TESTS"]
+    },
+    {
+      "sample_id": "Textualize/textual#4436",
+      "attribution_path": "data/xai_v5/Textualize__textual__4436.json",
+      "reference_explanation": "The model predicts degradation with strong positive structure attribution. TextArea is already a broad module with nine incoming and twenty-five outgoing dependencies and is in an import cycle; a call from TextArea into document history is positively attributed. The actual diff only guards mouse-selection cleanup, so the score is mainly warning about the existing central widget structure rather than a new dependency.",
+      "reference_fix": "Keep the guard local and cover selecting and non-selecting paths with tests. If TextArea cleanup continues to grow, extract a private selection-finalization helper without creating another cross-module dependency.",
+      "relevant_principles": ["NARROW_BOUNDARY", "ADP", "SRP"]
+    }
+  ]
+}

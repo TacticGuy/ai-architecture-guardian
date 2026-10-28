@@ -1,0 +1,48 @@
+{
+  "test": [
+    "Textualize/rich",
+    "Textualize/textual",
+    "arrow-py/arrow",
+    "celery/celery",
+    "encode/django-rest-framework",
+    "httpie/cli",
+    "marshmallow-code/marshmallow",
+    "sphinx-doc/sphinx",
+    "tqdm/tqdm"
+  ],
+  "validation": [
+    "PyCQA/flake8",
+    "aio-libs/aiohttp",
+    "encode/httpx",
+    "falconry/falcon",
+    "psf/black",
+    "python-telegram-bot/python-telegram-bot",
+    "tornadoweb/tornado"
+  ],
+  "train": [
+    "PyCQA/isort",
+    "Pylons/pyramid",
+    "aio-libs/yarl",
+    "celery/kombu",
+    "encode/starlette",
+    "encode/uvicorn",
+    "fastapi/fastapi",
+    "fastapi/typer",
+    "jazzband/pip-tools",
+    "locustio/locust",
+    "pallets/click",
+    "pallets/flask",
+    "pallets/jinja",
+    "pallets/quart",
+    "pallets/werkzeug",
+    "psf/requests",
+    "pydantic/pydantic",
+    "pypa/hatch",
+    "pytest-dev/pluggy",
+    "pytest-dev/pytest",
+    "python-attrs/attrs",
+    "python-poetry/poetry",
+    "scrapy/scrapy",
+    "sqlalchemy/alembic"
+  ]
+}
